@@ -1,0 +1,32 @@
+# Planning example only. The scaffold does not parse this file yet.
+simulation:
+  fixed_delta_seconds: 0.05
+  synchronous_mode: true
+
+vehicle:
+  blueprint: vehicle.lincoln.mkz
+  role_name: hero
+
+telemetry:
+  vehicle_state_hz: 20
+  gnss_hz: 10
+  fields:
+    - speed_mps
+    - acceleration_mps2
+    - longitudinal_acceleration_mps2
+    - throttle
+    - brake
+    - steering_command
+    - front_left_wheel_angle_deg
+    - front_right_wheel_angle_deg
+
+gnss:
+  enabled: true
+  relative_transform_m:
+    x: 0.0
+    y: 0.0
+    z: 1.5
+
+network:
+  # Deliberately undecided until the first external consumer is identified.
+  transport: undecided

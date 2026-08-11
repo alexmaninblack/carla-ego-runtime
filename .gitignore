@@ -1,0 +1,31 @@
+# Build output
+/build/
+/out/
+/cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Do not vendor simulator or Unreal Engine content
+CARLA/
+CarlaUnreal/
+UnrealEngine/
+*.uasset
+*.umap
+*.pak
+*.dylib
+*.so
+*.dll
