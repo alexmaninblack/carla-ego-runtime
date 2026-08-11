@@ -15,7 +15,8 @@ The first milestone includes only speed, physical acceleration, throttle,
 brake, normalized steering command, actual front-wheel steering angles, gear,
 engine RPM, simulation timing metadata, and GNSS position.
 
-Cameras, LiDAR, radar, ultrasonic modelling, and ROS 2 integration are deferred.
+Cameras, LiDAR, radar, ultrasonic modelling, and the optional ROS 2 adapter are
+deferred.
 
 ## Consequences
 

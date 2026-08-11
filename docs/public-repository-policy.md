@@ -26,6 +26,17 @@ review and attribution in the same change.
 The private Unreal Engine repository is a build prerequisite for the simulator,
 not a dependency to distribute from this repository.
 
+## COVESA boundary
+
+The project references COVESA VISS and VSS specifications and uses their public
+signal names. Their source repositories are licensed under MPL-2.0. Do not copy
+or generate distributable COVESA source artifacts into this repository without
+recording the exact upstream version, preserving required notices, and
+reviewing the resulting licence obligations.
+
+The project-owned `Vehicle.CarlaSimulation.*` overlay must remain clearly
+identified as an extension rather than an official part of COVESA VSS.
+
 ## Before every public push
 
 1. Review the complete staged file list and diff.

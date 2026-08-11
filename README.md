@@ -1,26 +1,36 @@
 # CARLA Ego Runtime
 
-A native C++ runtime and future network gateway for one instrumented ego
-vehicle in the [CARLA simulator](https://github.com/carla-simulator/carla).
+A native C++ runtime for one instrumented ego vehicle in the
+[CARLA simulator](https://github.com/carla-simulator/carla). It will expose
+vehicle telemetry through the COVESA Vehicle Information Service Specification
+(VISS).
 
 > [!IMPORTANT]
 > This repository currently contains a buildable project scaffold and design
-> documentation only. It does not connect to CARLA or publish telemetry yet.
+> documentation only. It does not connect to CARLA or serve telemetry yet.
 
 ## Initial scope
 
-The first milestone intentionally uses only low-cost vehicle state and GNSS:
+The first runtime milestone intentionally uses only low-cost vehicle state and
+GNSS:
 
-- signed vehicle speed;
-- throttle and brake commands;
-- normalized steering command;
-- actual front-wheel steering angles;
-- world and longitudinal acceleration;
+- vehicle speed;
+- longitudinal, lateral, and vertical acceleration;
+- simulated accelerator and brake pedal positions;
+- equivalent front-axle steering angle;
+- current gear and engine speed;
 - GNSS latitude, longitude, and altitude;
-- simulation frame and timestamp on every message.
+- simulation run, frame, and time metadata.
 
-Cameras, LiDAR, radar, ultrasonic modelling, ROS 2, and external autonomous
-control are out of scope for the first milestone.
+The external contract is a documented profile of
+[COVESA VISS 3.1](https://github.com/COVESA/vehicle-information-service-specification/tree/v3.1)
+over a [COVESA VSS 6.0](https://github.com/COVESA/vehicle_signal_specification/tree/v6.0)
+signal tree. The initial network profile uses JSON over Secure WebSocket and
+supports reading and subscribing to telemetry.
+
+Cameras, LiDAR, radar, ultrasonic modelling, and external autonomous control
+are out of scope for the first milestone. ROS 2 is not a runtime dependency; a
+ROS 2 adapter may be added later for consumers that already use that ecosystem.
 
 ## Repository boundaries
 
@@ -43,7 +53,9 @@ ctest --test-dir build --output-on-failure
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Draft telemetry contract](docs/telemetry-contract.md)
+- [VISS 3.1 compatibility profile](docs/viss-profile.md)
+- [VISS/VSS telemetry contract](docs/telemetry-contract.md)
+- [Role of ROS 2](docs/ros2-role.md)
 - [Roadmap](docs/roadmap.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)

@@ -3,22 +3,27 @@
 ## Goal
 
 Run one ego vehicle in a CARLA city, collect a deliberately small initial set
-of vehicle-state and GNSS signals, and make those signals available to an
-external consumer through a stable interface.
+of vehicle-state and GNSS signals, and expose them to network clients through a
+stable COVESA VISS interface.
 
 ## System boundary
 
 ```mermaid
 flowchart LR
-    C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| R["carla-ego-runtime"]
-    R -->|"Versioned telemetry contract"| E["External consumer"]
-    E -. "Future control commands" .-> R
-    R -. "VehicleControl" .-> C
+    subgraph R["carla-ego-runtime"]
+        K["Collectors"] --> N["Normalized internal state"]
+        N --> M["VSS mapper and signal store"]
+        M --> S["VISS 3.1 server"]
+        N -. "Optional future adapter" .-> ROS["ROS 2"]
+    end
+    C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| K
+    S -->|"JSON over WSS: Read and Subscribe"| E["VISS clients"]
+    ROS -.-> X["Autoware, RViz, rosbag, ROS nodes"]
 ```
 
 The CARLA/Unreal server remains responsible for the world, physics, vehicle,
-and GNSS actor. This repository owns the ego-vehicle lifecycle, telemetry
-normalization, synchronization, and the future external network adapter.
+and GNSS actor. This repository owns the ego-vehicle lifecycle, collection,
+normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
 
 ## Initial components
 
@@ -28,10 +33,37 @@ normalization, synchronization, and the future external network adapter.
    control, extended telemetry, and front-wheel steer angles.
 3. **GNSS collector** — attaches one `sensor.other.gnss` actor and receives
    fixes through the native CARLA sensor callback.
-4. **Frame assembler** — associates measurements with simulation frame and
-   timestamp and prevents unbounded buffering.
-5. **Publisher adapter** — will expose the versioned contract through a
-   transport chosen after the first external consumer is identified.
+4. **Frame assembler** — associates measurements with a simulation run, frame,
+   and timestamp and prevents unbounded buffering.
+5. **Normalizer** — converts CARLA coordinates and native values into explicit
+   physical quantities without depending on VISS or ROS 2.
+6. **VSS mapper and signal store** — maps normalized values to the VSS 6.0
+   tree, performs unit conversions, and adds the documented CARLA simulation
+   overlay.
+7. **VISS server** — exposes the signal tree using the project VISS 3.1
+   compatibility profile.
+
+## VISS boundary
+
+VISS is the external service contract, not merely a serialization wrapper. The
+initial profile fixes the following choices:
+
+- COVESA VISS 3.1 semantics;
+- a VSS 6.0 signal tree plus the documented simulation overlay;
+- JSON primary payload encoding;
+- Secure WebSocket (`wss`) transport;
+- `get`, `subscribe`, and `unsubscribe` for consumers;
+- protocol-valid `set` handling, but no writable signal nodes in the initial
+  tree.
+
+The specification requires Read and Update support at the transport level.
+Therefore the server must parse Update requests and return a standard VISS
+error for read-only nodes; it must not silently invent actuator semantics. A
+fully conformant implementation and its test suite are an M4 deliverable.
+
+Whether the endpoint embeds a native VISS implementation or connects the
+runtime to the COVESA VISS reference implementation (VISSR) remains an
+implementation decision. It does not change the public interface.
 
 ## Deliberate choices
 
@@ -41,9 +73,11 @@ normalization, synchronization, and the future external network adapter.
   delta (20 simulation frames per second).
 - Vehicle state is sampled every simulation frame; GNSS initially runs at
   10 Hz.
-- The external transport is not selected in the scaffold. CARLA's internal RPC
-  and streaming protocol will not be presented as the stable public contract.
-- Native ROS 2 inside CARLA is not a first-milestone dependency.
+- CARLA's internal RPC and streaming protocol is not the public contract.
+- VSS units and meanings take precedence at the external boundary; native or
+  SI values may be retained internally.
+- ROS 2 is an optional edge adapter, never the required path between CARLA and
+  VISS. See [Role of ROS 2](ros2-role.md).
 
 ## Dependency boundary
 
@@ -51,3 +85,8 @@ The project will link against an installed LibCarla package. It will not vendor
 CARLA or use a CARLA/Unreal Engine source checkout as a Git submodule. A tested
 CARLA commit and installation procedure will be recorded when connectivity is
 implemented.
+
+VSS and VISS versions are pinned at the interface boundary. Referencing their
+specifications does not require vendoring their source. Any future reuse of
+COVESA code, generated schemas, or VISSR is subject to its MPL-2.0 licence and
+must be recorded explicitly.

@@ -10,12 +10,11 @@ vehicle:
 telemetry:
   vehicle_state_hz: 20
   gnss_hz: 10
-  fields:
-    - speed_mps
-    - acceleration_mps2
-    - longitudinal_acceleration_mps2
-    - throttle
-    - brake
+  internal_fields:
+    - signed_longitudinal_speed_mps
+    - acceleration_vehicle_mps2
+    - throttle_command
+    - brake_command
     - steering_command
     - front_left_wheel_angle_deg
     - front_right_wheel_angle_deg
@@ -27,6 +26,22 @@ gnss:
     y: 0.0
     z: 1.5
 
-network:
-  # Deliberately undecided until the first external consumer is identified.
-  transport: undecided
+viss:
+  version: "3.1"
+  vss_version: "6.0"
+  profile_version: "0.1"
+  transport: secure_websocket
+  websocket_subprotocol: VISSv3
+  payload_encoding: json
+  bind_address: 127.0.0.1
+  port: 6443
+  signal_tree: vss_6_with_carla_simulation_overlay
+  writable_signals: false
+  tls:
+    # Paths are local deployment inputs and must never be committed with keys.
+    certificate_file: ""
+    private_key_file: ""
+
+ros2:
+  # Optional future adapter; not required by the core runtime.
+  enabled: false
