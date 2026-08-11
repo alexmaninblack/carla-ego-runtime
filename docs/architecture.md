@@ -67,8 +67,8 @@ implementation decision. It does not change the public interface.
 
 ## Deliberate choices
 
-- C++17 is used because the native LibCarla client already builds on the target
-  Apple Silicon machine.
+- C++20 is used because the installed native LibCarla package requires it on
+  the target Apple Silicon machine.
 - The first implementation will use synchronous mode with a 0.05 second fixed
   delta (20 simulation frames per second).
 - Vehicle state is sampled every simulation frame; GNSS initially runs at
@@ -81,10 +81,12 @@ implementation decision. It does not change the public interface.
 
 ## Dependency boundary
 
-The project will link against an installed LibCarla package. It will not vendor
-CARLA or use a CARLA/Unreal Engine source checkout as a Git submodule. A tested
-CARLA commit and installation procedure will be recorded when connectivity is
-implemented.
+The native build links against an installed LibCarla package. It does not
+vendor CARLA or use a CARLA/Unreal Engine source checkout as a Git submodule.
+The tested commit and installation procedure are recorded in the
+[native macOS setup](carla-setup-macos.md). The default build keeps CLI and
+documentation tests available without LibCarla;
+`CARLA_EGO_WITH_CARLA=ON` enables the native adapter.
 
 VSS and VISS versions are pinned at the interface boundary. Referencing their
 specifications does not require vendoring their source. Any future reuse of

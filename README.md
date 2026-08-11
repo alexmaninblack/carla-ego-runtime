@@ -6,12 +6,28 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> This repository currently contains a buildable project scaffold and design
-> documentation only. It does not connect to CARLA or serve telemetry yet.
+> M1 native CARLA connectivity is implemented. The runtime can connect, verify
+> client/server versions, select or spawn the configured ego vehicle, and clean
+> up only actors it owns. Telemetry collection and the VISS server are the next
+> milestones and are not implemented yet.
 
-## Initial scope
+## Current capabilities
 
-The first runtime milestone intentionally uses only low-cost vehicle state and
+- configurable CARLA RPC host, port, and timeout;
+- exact LibCarla/server version validation by default;
+- selection of an existing vehicle by `role_name`;
+- deterministic spawn fallback using a configured blueprint and map spawn
+  points;
+- signal-aware bounded test lifetime;
+- ownership tracking that never destroys a pre-existing vehicle;
+- a dependency-free build mode for CLI tests and documentation CI;
+- a native build mode against an installed `Carla::carla-client` package.
+
+Run `carla-ego-runtime --help` for all connection and vehicle options.
+
+## Initial telemetry scope
+
+The next runtime milestones intentionally use only low-cost vehicle state and
 GNSS:
 
 - vehicle speed;
@@ -29,8 +45,9 @@ signal tree. The initial network profile uses JSON over Secure WebSocket and
 supports reading and subscribing to telemetry.
 
 Cameras, LiDAR, radar, ultrasonic modelling, and external autonomous control
-are out of scope for the first milestone. ROS 2 is not a runtime dependency; a
-ROS 2 adapter may be added later for consumers that already use that ecosystem.
+are out of scope for the first telemetry milestone. ROS 2 is not a runtime
+dependency; a ROS 2 adapter may be added later for consumers that already use
+that ecosystem.
 
 ## Repository boundaries
 
@@ -39,9 +56,10 @@ Engine checkout. It must not contain private Epic Games/Unreal Engine code,
 binaries, assets, generated data, credentials, or other restricted material.
 See [Public repository policy](docs/public-repository-policy.md).
 
-## Build the scaffold
+## Build without CARLA
 
-A CARLA installation is not required until connectivity is implemented.
+The default build keeps argument parsing and documentation CI independent of a
+CARLA installation:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -50,8 +68,26 @@ ctest --test-dir build --output-on-failure
 ./build/carla-ego-runtime --version
 ```
 
+## Build and run with CARLA
+
+Install LibCarla to a local prefix, then enable native connectivity:
+
+```sh
+cmake -S . -B build-carla \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCARLA_EGO_WITH_CARLA=ON \
+  -DCMAKE_PREFIX_PATH=/path/to/carla-install
+cmake --build build-carla
+ctest --test-dir build-carla --output-on-failure
+./build-carla/carla-ego-runtime --run-seconds 10
+```
+
+The CARLA server must already be listening on the configured RPC address. See
+the complete [native macOS setup and M1 runbook](docs/carla-setup-macos.md).
+
 ## Documentation
 
+- [Native CARLA setup on macOS](docs/carla-setup-macos.md)
 - [Architecture](docs/architecture.md)
 - [VISS 3.1 compatibility profile](docs/viss-profile.md)
 - [VISS/VSS telemetry contract](docs/telemetry-contract.md)

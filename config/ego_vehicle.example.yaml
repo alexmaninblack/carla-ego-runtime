@@ -1,4 +1,11 @@
-# Planning example only. The scaffold does not parse this file yet.
+# Planning example only. M1 uses equivalent command-line flags; YAML parsing is
+# not implemented yet.
+carla:
+  host: 127.0.0.1
+  rpc_port: 2000
+  timeout_ms: 10000
+  require_matching_versions: true
+
 simulation:
   fixed_delta_seconds: 0.05
   synchronous_mode: true
@@ -6,6 +13,8 @@ simulation:
 vehicle:
   blueprint: vehicle.lincoln.mkz
   role_name: hero
+  spawn_if_missing: true
+  spawn_point_index: 0
 
 telemetry:
   vehicle_state_hz: 20

@@ -19,11 +19,11 @@ Engine source code, and the planned external interface is unambiguous.
 
 ## M1 — Native CARLA connection
 
-- Locate an installed LibCarla package through CMake.
-- Connect to a configurable host and RPC port.
-- Verify client/server version compatibility.
-- Select an existing `hero` vehicle or spawn the configured blueprint.
-- Destroy only actors owned by this runtime during shutdown.
+- [x] Locate an installed LibCarla package through CMake.
+- [x] Connect to a configurable host and RPC port.
+- [x] Verify client/server version compatibility.
+- [x] Select an existing `hero` vehicle or spawn the configured blueprint.
+- [x] Destroy only actors owned by this runtime during shutdown.
 
 Exit criterion: the runtime repeatedly connects, identifies one ego vehicle,
 and exits cleanly on the Apple Silicon development machine.
@@ -72,7 +72,7 @@ compatibility suite passes.
 - Add a BehaviorAgent route for the initial autonomous drive.
 - Keep the control source replaceable for future external control.
 - Add configuration validation, structured logging, and run manifests.
-- Pin the tested CARLA commit and document reproducible installation.
+- Maintain the pinned CARLA commit and reproducible installation runbook.
 - Run endurance and restart tests.
 
 Exit criterion: the ego vehicle drives a repeatable route while VISS telemetry
