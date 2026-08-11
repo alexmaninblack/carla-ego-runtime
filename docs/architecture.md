@@ -69,8 +69,9 @@ implementation decision. It does not change the public interface.
 
 - C++20 is used because the installed native LibCarla package requires it on
   the target Apple Silicon machine.
-- The first implementation will use synchronous mode with a 0.05 second fixed
-  delta (20 simulation frames per second).
+- The runtime is the designated synchronous tick owner by default and uses a
+  0.05 second fixed delta (20 simulation frames per second). Observer mode is
+  explicit and requires a different client to own the clock.
 - Vehicle state is sampled every simulation frame; GNSS initially runs at
   10 Hz.
 - CARLA's internal RPC and streaming protocol is not the public contract.
@@ -87,6 +88,11 @@ The tested commit and installation procedure are recorded in the
 [native macOS setup](carla-setup-macos.md). The default build keeps CLI and
 documentation tests available without LibCarla;
 `CARLA_EGO_WITH_CARLA=ON` enables the native adapter.
+
+The previous CARLA world settings are restored before a runtime-owned ego
+vehicle is destroyed. Each tick replaces one snapshot in the VSS latest-value
+store. The core normalizer, projection, and store do not include LibCarla
+headers, which keeps their behavior deterministic and unit-testable.
 
 VSS and VISS versions are pinned at the interface boundary. Referencing their
 specifications does not require vendoring their source. Any future reuse of

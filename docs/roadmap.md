@@ -30,13 +30,13 @@ and exits cleanly on the Apple Silicon development machine.
 
 ## M2 — Basic vehicle state and VSS mapping
 
-- Enable synchronous mode with one designated tick owner.
-- Read velocity, acceleration, throttle, brake, steering command, gear, engine
+- [x] Enable synchronous mode with one designated tick owner.
+- [x] Read velocity, acceleration, throttle, brake, steering command, gear, engine
   RPM, and front-wheel angles.
-- Maintain a transport-independent normalized internal state.
-- Convert values to the documented VSS paths, units, ranges, and ISO 8855 axes.
-- Generate and validate the versioned `Vehicle.CarlaSimulation.*` VSS overlay.
-- Add unit tests for projections, steering conversion, units, rounding, and
+- [x] Maintain a transport-independent normalized internal state.
+- [x] Convert values to the documented VSS paths, units, ranges, and ISO 8855 axes.
+- [x] Generate and validate the versioned `Vehicle.CarlaSimulation.*` VSS overlay.
+- [x] Add unit tests for projections, steering conversion, units, rounding, and
   validation ranges.
 
 Exit criterion: the VSS signal store receives one correctly timestamped state

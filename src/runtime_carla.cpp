@@ -1,4 +1,6 @@
 #include "carla_ego_runtime/runtime.hpp"
+#include "carla_ego_runtime/vehicle_state.hpp"
+#include "carla_ego_runtime/vss.hpp"
 
 #include <carla/client/Actor.h>
 #include <carla/client/ActorAttribute.h>
@@ -13,12 +15,16 @@
 
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <optional>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <utility>
 
 namespace carla_ego_runtime {
 namespace {
@@ -75,6 +81,52 @@ class OwnedActorGuard {
   }
 
   carla::SharedPtr<cc::Actor> actor_;
+};
+
+class WorldSettingsGuard {
+ public:
+  explicit WorldSettingsGuard(cc::World &world)
+      : world_(world), original_(world.GetSettings()) {}
+
+  WorldSettingsGuard(const WorldSettingsGuard &) = delete;
+  WorldSettingsGuard &operator=(const WorldSettingsGuard &) = delete;
+
+  ~WorldSettingsGuard() {
+    RestoreNoThrow();
+  }
+
+  void EnableSynchronousMode(double fixed_delta_seconds,
+                             std::chrono::milliseconds timeout) {
+    auto settings = original_;
+    settings.synchronous_mode = true;
+    settings.fixed_delta_seconds = fixed_delta_seconds;
+    world_.ApplySettings(settings, timeout);
+    active_ = true;
+  }
+
+  void Restore() {
+    if (!active_) {
+      return;
+    }
+    world_.ApplySettings(original_, std::chrono::seconds(10));
+    active_ = false;
+  }
+
+ private:
+  void RestoreNoThrow() noexcept {
+    try {
+      Restore();
+    } catch (const std::exception &error) {
+      std::cerr << "Failed to restore CARLA world settings: " << error.what()
+                << '\n';
+    } catch (...) {
+      std::cerr << "Failed to restore CARLA world settings: unknown error\n";
+    }
+  }
+
+  cc::World &world_;
+  carla::rpc::EpisodeSettings original_;
+  bool active_ = false;
 };
 
 bool HasRoleName(const cc::Actor &actor, const std::string &role_name) {
@@ -160,22 +212,121 @@ carla::SharedPtr<cc::Vehicle> SpawnEgoVehicle(cc::World &world,
   throw std::runtime_error("all recommended spawn points are occupied");
 }
 
-void WaitForRequestedDuration(std::uint32_t run_seconds) {
-  if (run_seconds == 0) {
-    return;
+std::string GenerateRunId() {
+  std::random_device random;
+  std::ostringstream output;
+  output << std::hex << std::setfill('0');
+  for (int index = 0; index < 4; ++index) {
+    output << std::setw(8) << static_cast<std::uint32_t>(random());
   }
+  return output.str();
+}
 
+void ConfigureStopSignals() {
   stop_requested = 0;
   std::signal(SIGINT, RequestStop);
   std::signal(SIGTERM, RequestStop);
+}
 
-  std::cout << "Keeping the runtime alive for " << run_seconds
-            << " seconds; press Ctrl-C to stop early.\n";
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(run_seconds);
-  while (stop_requested == 0 && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+bool ReachedStopCondition(const RuntimeOptions &options,
+                          std::uint64_t frame_count,
+                          std::chrono::steady_clock::time_point started_at) {
+  if (stop_requested != 0) {
+    return true;
   }
+  if (options.max_frames != 0 && frame_count >= options.max_frames) {
+    return true;
+  }
+  return options.run_seconds != 0 &&
+         std::chrono::steady_clock::now() >=
+             started_at + std::chrono::seconds(options.run_seconds);
+}
+
+CarlaVehicleSample CollectSample(
+    const cc::WorldSnapshot &snapshot, cc::Vehicle &vehicle,
+    const std::string &run_id, const SimulationClockAnchor &clock_anchor) {
+  const auto actor_snapshot = snapshot.Find(vehicle.GetId());
+  if (!actor_snapshot.has_value()) {
+    throw std::runtime_error("ego vehicle is absent from world snapshot frame " +
+                             std::to_string(snapshot.GetFrame()));
+  }
+
+  auto acceleration_vehicle = actor_snapshot->acceleration;
+  actor_snapshot->transform.rotation.InverseRotateVector(acceleration_vehicle);
+  const auto telemetry = vehicle.GetTelemetryData();
+
+  CarlaVehicleSample sample;
+  sample.run_id = run_id;
+  sample.ego_vehicle_id = std::to_string(vehicle.GetId());
+  sample.frame_id = static_cast<std::uint64_t>(snapshot.GetFrame());
+  sample.simulation_time_s = snapshot.GetTimestamp().elapsed_seconds;
+  sample.timestamp_utc = clock_anchor.TimestampFor(sample.simulation_time_s);
+  sample.velocity_world_mps = {actor_snapshot->velocity.x,
+                               actor_snapshot->velocity.y,
+                               actor_snapshot->velocity.z};
+  sample.acceleration_vehicle_carla_mps2 = {
+      acceleration_vehicle.x, acceleration_vehicle.y, acceleration_vehicle.z};
+  sample.throttle_command = telemetry.throttle;
+  sample.brake_command = telemetry.brake;
+  sample.steering_command = telemetry.steer;
+  sample.gear = telemetry.gear;
+  sample.engine_rpm = telemetry.engine_rpm;
+  sample.front_left_wheel_angle_carla_deg = vehicle.GetWheelSteerAngle(
+      cc::Vehicle::WheelLocation::FL_Wheel);
+  sample.front_right_wheel_angle_carla_deg = vehicle.GetWheelSteerAngle(
+      cc::Vehicle::WheelLocation::FR_Wheel);
+  return sample;
+}
+
+void CollectVehicleState(cc::World &world, cc::Vehicle &vehicle,
+                         const RuntimeOptions &options) {
+  const auto timeout = std::chrono::milliseconds(options.timeout_ms);
+  WorldSettingsGuard settings_guard(world);
+  if (options.tick_owner) {
+    settings_guard.EnableSynchronousMode(options.fixed_delta_seconds, timeout);
+    std::cout << "Synchronous tick owner: yes (fixed delta "
+              << options.fixed_delta_seconds << " s)\n";
+  } else {
+    std::cout << "Synchronous tick owner: no (observing external ticks)\n";
+  }
+
+  ConfigureStopSignals();
+  const auto started_at = std::chrono::steady_clock::now();
+  const auto run_id = GenerateRunId();
+  std::optional<SimulationClockAnchor> clock_anchor;
+  LatestVssSignalStore signal_store;
+  std::uint64_t frame_count = 0;
+
+  while (!ReachedStopCondition(options, frame_count, started_at)) {
+    cc::WorldSnapshot snapshot = options.tick_owner
+                                     ? (world.Tick(timeout), world.GetSnapshot())
+                                     : world.WaitForTick(timeout);
+    const double simulation_time_s = snapshot.GetTimestamp().elapsed_seconds;
+    if (!clock_anchor.has_value()) {
+      clock_anchor.emplace(simulation_time_s,
+                           std::chrono::system_clock::now());
+    }
+
+    const auto normalized = NormalizeVehicleSample(
+        CollectSample(snapshot, vehicle, run_id, *clock_anchor));
+    auto vss_snapshot = ProjectToVss(normalized);
+    if (!signal_store.Publish(std::move(vss_snapshot))) {
+      throw std::runtime_error("duplicate or out-of-order CARLA frame " +
+                               std::to_string(snapshot.GetFrame()));
+    }
+    ++frame_count;
+
+    std::cout << "VSS frame=" << normalized.frame_id
+              << " simulation_time=" << normalized.simulation_time_s
+              << " timestamp=" << signal_store.Latest()->timestamp
+              << " speed_kmh=" << normalized.speed_mps * 3.6
+              << " points=" << signal_store.Latest()->data_points.size()
+              << '\n';
+  }
+
+  std::cout << "Published " << signal_store.publish_count()
+            << " frame-aligned VSS state update(s); retained snapshots=1\n";
+  settings_guard.Restore();
 }
 
 }  // namespace
@@ -228,7 +379,7 @@ int RunRuntime(const RuntimeOptions &options) {
               << " type=" << ego_vehicle->GetTypeId()
               << " role_name=" << options.role_name << '\n';
 
-    WaitForRequestedDuration(options.run_seconds);
+    CollectVehicleState(world, *ego_vehicle, options);
 
     if (owned_actor && !owned_actor->Destroy()) {
       return 4;

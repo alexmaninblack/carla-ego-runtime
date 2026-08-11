@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   carla_ego_runtime
-  VERSION 0.2.0
+  VERSION 0.3.0
   DESCRIPTION "Native runtime and telemetry gateway for a CARLA ego vehicle"
   LANGUAGES CXX
 )
@@ -13,7 +13,12 @@ option(
   OFF
 )
 
-add_library(carla-ego-runtime-core STATIC src/runtime_options.cpp)
+add_library(
+  carla-ego-runtime-core STATIC
+  src/runtime_options.cpp
+  src/vehicle_state.cpp
+  src/vss.cpp
+)
 target_compile_features(carla-ego-runtime-core PUBLIC cxx_std_20)
 target_include_directories(
   carla-ego-runtime-core
@@ -50,7 +55,24 @@ if(BUILD_TESTING)
   target_link_libraries(runtime-options-test PRIVATE carla-ego-runtime-core)
   carla_ego_enable_warnings(runtime-options-test)
 
+  add_executable(vehicle-state-test tests/vehicle_state_test.cpp)
+  target_link_libraries(vehicle-state-test PRIVATE carla-ego-runtime-core)
+  carla_ego_enable_warnings(vehicle-state-test)
+
+  add_executable(vss-projection-test tests/vss_projection_test.cpp)
+  target_link_libraries(vss-projection-test PRIVATE carla-ego-runtime-core)
+  carla_ego_enable_warnings(vss-projection-test)
+
   add_test(NAME runtime_options COMMAND runtime-options-test)
+  add_test(NAME vehicle_state COMMAND vehicle-state-test)
+  add_test(NAME vss_projection COMMAND vss-projection-test)
+  add_test(
+    NAME vss_overlay
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -DOVERLAY_FILE=${CMAKE_CURRENT_SOURCE_DIR}/vss/Vehicle.CarlaSimulation.vspec
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateVssOverlay.cmake
+  )
   add_test(NAME runtime_reports_version COMMAND carla-ego-runtime --version)
   add_test(NAME runtime_reports_help COMMAND carla-ego-runtime --help)
   set_tests_properties(

@@ -6,10 +6,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> M1 native CARLA connectivity is implemented. The runtime can connect, verify
-> client/server versions, select or spawn the configured ego vehicle, and clean
-> up only actors it owns. Telemetry collection and the VISS server are the next
-> milestones and are not implemented yet.
+> M2 basic vehicle-state collection is implemented. The runtime owns a
+> synchronous 20 Hz simulation clock by default, publishes exactly one
+> timestamped VSS snapshot per CARLA frame, and retains only the latest
+> snapshot. GNSS and the network-facing VISS server remain later milestones.
 
 ## Current capabilities
 
@@ -20,6 +20,11 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   points;
 - signal-aware bounded test lifetime;
 - ownership tracking that never destroys a pre-existing vehicle;
+- designated synchronous tick ownership with restoration of prior world
+  settings on exit;
+- frame-aligned speed, acceleration, pedal, steering, gear, and RPM sampling;
+- transport-independent normalization and VSS 6.0 projection;
+- a bounded latest-value signal store and project-owned simulation overlay;
 - a dependency-free build mode for CLI tests and documentation CI;
 - a native build mode against an installed `Carla::carla-client` package.
 
@@ -27,8 +32,8 @@ Run `carla-ego-runtime --help` for all connection and vehicle options.
 
 ## Initial telemetry scope
 
-The next runtime milestones intentionally use only low-cost vehicle state and
-GNSS:
+The initial runtime milestones intentionally use only low-cost vehicle state
+and GNSS:
 
 - vehicle speed;
 - longitudinal, lateral, and vertical acceleration;
@@ -79,11 +84,15 @@ cmake -S . -B build-carla \
   -DCMAKE_PREFIX_PATH=/path/to/carla-install
 cmake --build build-carla
 ctest --test-dir build-carla --output-on-failure
-./build-carla/carla-ego-runtime --run-seconds 10
+./build-carla/carla-ego-runtime --max-frames 20
 ```
 
+This collects one simulated second at the default fixed step of 0.05 seconds.
+Use `--observe-ticks` only when another client is the designated synchronous
+tick owner.
+
 The CARLA server must already be listening on the configured RPC address. See
-the complete [native macOS setup and M1 runbook](docs/carla-setup-macos.md).
+the complete [native macOS setup and M2 runbook](docs/carla-setup-macos.md).
 
 ## Documentation
 

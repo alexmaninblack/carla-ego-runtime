@@ -2,12 +2,12 @@
 
 ## Tested baseline
 
-M1 is developed and tested against:
+M1/M2 are developed and tested against:
 
 - CARLA fork: `alexmaninblack/carla`;
 - branch: `macos-apple-silicon`;
 - commit:
-  [`6296236e1abd205aa8efb6b5991dfef34e95c33a`](https://github.com/alexmaninblack/carla/commit/6296236e1abd205aa8efb6b5991dfef34e95c33a);
+  [`385927b6ac5efaaa204b5b9853a7aaa5c5917428`](https://github.com/alexmaninblack/carla/commit/385927b6ac5efaaa204b5b9853a7aaa5c5917428);
 - architecture: Apple Silicon (`arm64`);
 - compiler: AppleClang with C++20;
 - default CARLA RPC endpoint: `127.0.0.1:2000`.
@@ -51,16 +51,16 @@ LibCarla requires C++20, so enabling CARLA connectivity raises the complete
 runtime build to C++20. The default dependency-free build uses the same
 language level to prevent the two modes from drifting.
 
-## Start CARLA and validate M1
+## Start CARLA and validate M2
 
 Start the CARLA Unreal application, or open `CarlaUnreal.uproject` in Unreal
 Editor and enter Play mode. The server must listen on RPC port 2000 before the
 runtime is started.
 
-Run a ten-second lifecycle check:
+Collect 20 frame-aligned VSS snapshots (one simulated second at 20 Hz):
 
 ```sh
-./build-carla/carla-ego-runtime --run-seconds 10
+./build-carla/carla-ego-runtime --max-frames 20
 ```
 
 Expected output includes:
@@ -69,16 +69,30 @@ Expected output includes:
 - the current map name;
 - whether an existing `hero` vehicle was selected or a new one was spawned;
 - the actor ID and blueprint type;
+- synchronous tick ownership and the fixed step;
+- frame ID, simulation time, UTC timestamp, speed, and VSS point count for
+  every accepted frame;
+- confirmation that only one latest snapshot was retained;
 - destruction of the actor on exit only when this runtime spawned it.
 
-Use `--no-spawn` to make the check read-only. Use Ctrl-C to stop a bounded run
-early; a runtime-owned actor is still cleaned up.
+Use `--no-spawn` to avoid creating an actor. This does not make the default run
+fully read-only because the tick owner temporarily enables synchronous mode.
+Use `--observe-ticks` for a world-settings read-only client when another client
+already owns and advances the simulation clock. Ctrl-C still restores settings
+and cleans up a runtime-owned actor.
 
 The M1 acceptance test on the baseline above used matching client/server
 version `0.10.0` and `Town10HD_Opt`. One runtime spawned `hero`, two independent
 `--no-spawn` clients selected the same actor without deleting it, Ctrl-C on the
 owning runtime destroyed it, and a final `--no-spawn` check confirmed its
 absence. A second bounded spawn-and-cleanup cycle also passed.
+
+The M2 acceptance test used the same `0.10.0` client/server pair on
+`Town10HD_Opt`. Frames 257–259 were sampled with simulation times 7.949,
+7.999, and 8.049 seconds. Each produced 14 co-timestamped VSS points, the store
+reported three accepted updates with one retained snapshot, and the owned ego
+vehicle was destroyed. The pinned CARLA commit replaces the UE5 zero-value
+wheel-angle stub with live Chaos wheel state.
 
 ## Command-line options
 
@@ -92,7 +106,10 @@ absence. A second bounded spawn-and-cleanup cycle also passed.
 | `--spawn-point-index` | `0` | First recommended spawn point to try |
 | `--no-spawn` | off | Fail instead of creating an ego vehicle |
 | `--allow-version-mismatch` | off | Continue after a client/server mismatch warning |
-| `--run-seconds` | `0` | Keep the M1 connection alive for a bounded test |
+| `--max-frames` | `1` | Number of snapshots; `0` is unlimited |
+| `--run-seconds` | `0` | Optional wall-clock limit; when positive it disables the implicit one-frame limit unless `--max-frames` is also supplied |
+| `--fixed-delta-seconds` | `0.05` | Simulation step used by the tick owner |
+| `--observe-ticks` | off | Wait for an external tick owner without changing world settings |
 
 The runtime tries every recommended map spawn point in deterministic order if
 the configured first point is occupied. It fails without changing the world if
@@ -108,3 +125,5 @@ the blueprint is absent or every spawn point is blocked.
   the running CARLA server. Bypass only for an intentional compatibility test.
 - **No spawn points available** — choose a map with recommended spawn points or
   start with an existing vehicle carrying the requested `role_name`.
+- **Observer times out** — no other client is advancing the synchronous world;
+  start the designated owner or omit `--observe-ticks`.

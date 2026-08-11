@@ -15,6 +15,9 @@ struct RuntimeOptions {
   std::string blueprint_id = "vehicle.lincoln.mkz";
   std::size_t spawn_point_index = 0;
   std::uint32_t run_seconds = 0;
+  std::uint64_t max_frames = 1;
+  double fixed_delta_seconds = 0.05;
+  bool tick_owner = true;
   bool spawn_if_missing = true;
   bool require_matching_versions = true;
 };

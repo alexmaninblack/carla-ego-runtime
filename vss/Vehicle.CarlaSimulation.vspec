@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Project-owned extension for COVESA VSS 6.0. It is not part of standard VSS.
+
+Vehicle.CarlaSimulation:
+  type: branch
+  description: CARLA simulation synchronization metadata.
+
+Vehicle.CarlaSimulation.ProfileVersion:
+  datatype: string
+  type: attribute
+  default: "0.1"
+  description: Version of the CARLA VISS compatibility profile.
+
+Vehicle.CarlaSimulation.RunId:
+  datatype: string
+  type: sensor
+  description: Unique identifier of one simulator run.
+
+Vehicle.CarlaSimulation.EgoVehicleId:
+  datatype: string
+  type: sensor
+  description: Stable ego vehicle actor identifier within the run.
+
+Vehicle.CarlaSimulation.FrameId:
+  datatype: uint64
+  type: sensor
+  min: 0
+  description: CARLA simulation frame represented by this state update.
+
+Vehicle.CarlaSimulation.SimulationTime:
+  datatype: double
+  type: sensor
+  unit: s
+  min: 0
+  description: Elapsed CARLA simulation time.

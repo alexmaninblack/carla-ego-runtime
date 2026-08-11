@@ -4,6 +4,6 @@
 
 namespace carla_ego_runtime {
 
-inline constexpr std::string_view kVersion = "0.2.0";
+inline constexpr std::string_view kVersion = "0.3.0";
 
 }  // namespace carla_ego_runtime

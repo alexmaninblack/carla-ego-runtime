@@ -1,6 +1,7 @@
 #include "carla_ego_runtime/runtime_options.hpp"
 
 #include <charconv>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -44,10 +45,27 @@ void RequireNonEmpty(const std::string &value, std::string_view option) {
   }
 }
 
+double ParsePositiveDouble(const std::string &text, std::string_view option) {
+  std::size_t consumed = 0;
+  double value = 0.0;
+  try {
+    value = std::stod(text, &consumed);
+  } catch (const std::exception &) {
+    throw std::invalid_argument("invalid value for " + std::string(option) +
+                                ": " + text);
+  }
+  if (consumed != text.size() || !std::isfinite(value) || value <= 0.0) {
+    throw std::invalid_argument("invalid value for " + std::string(option) +
+                                ": " + text);
+  }
+  return value;
+}
+
 }  // namespace
 
 ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
   ParsedCommandLine result;
+  bool max_frames_was_set = false;
 
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const auto &argument = arguments[index];
@@ -82,6 +100,19 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
     } else if (argument == "--run-seconds") {
       result.options.run_seconds = ParseUnsigned<std::uint32_t>(
           RequireValue(arguments, index), "--run-seconds");
+    } else if (argument == "--max-frames") {
+      result.options.max_frames = ParseUnsigned<std::uint64_t>(
+          RequireValue(arguments, index), "--max-frames");
+      max_frames_was_set = true;
+    } else if (argument == "--fixed-delta-seconds") {
+      result.options.fixed_delta_seconds = ParsePositiveDouble(
+          RequireValue(arguments, index), "--fixed-delta-seconds");
+      if (result.options.fixed_delta_seconds > 1.0) {
+        throw std::invalid_argument(
+            "--fixed-delta-seconds must be no greater than 1.0");
+      }
+    } else if (argument == "--observe-ticks") {
+      result.options.tick_owner = false;
     } else if (argument == "--no-spawn") {
       result.options.spawn_if_missing = false;
     } else if (argument == "--allow-version-mismatch") {
@@ -89,6 +120,12 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
     } else {
       throw std::invalid_argument("unknown option: " + argument);
     }
+  }
+
+  // A requested wall-clock run should not be cut short by the safe one-frame
+  // default unless the caller explicitly supplies both limits.
+  if (result.options.run_seconds > 0 && !max_frames_was_set) {
+    result.options.max_frames = 0;
   }
 
   return result;
@@ -111,8 +148,13 @@ Options:
       --spawn-point-index N     First recommended spawn point to try (default: 0)
       --no-spawn                Fail instead of spawning when the role is absent
       --allow-version-mismatch  Warn instead of failing on client/server mismatch
-      --run-seconds N           Keep the connection alive for N seconds
-                                (default: 0, connect and validate only)
+      --max-frames N            Stop after N telemetry frames (default: 1;
+                                0 means unlimited)
+      --run-seconds N           Maximum wall-clock run time (default: 0,
+                                no time limit)
+      --fixed-delta-seconds S   Synchronous simulation step (default: 0.05)
+      --observe-ticks           Do not own or advance the simulation clock;
+                                wait for another designated tick owner
 )";
 }
 

@@ -1,7 +1,7 @@
 # VISS/VSS telemetry contract v0.1
 
-Status: **accepted planning contract**. Implementation and conformance testing
-remain pending.
+Status: **implemented for the M2 vehicle-state subset**. GNSS is an M3
+addition and VISS network conformance remains an M4 deliverable.
 
 ## Standards baseline
 
@@ -36,8 +36,11 @@ subset is defined in the [VISS compatibility profile](viss-profile.md).
 | `Vehicle.CurrentLocation.Longitude` | `double`, degrees | CARLA GNSS longitude. |
 | `Vehicle.CurrentLocation.Altitude` | `double`, m | CARLA GNSS altitude. |
 
-The precise steering conversion, coordinate conversion, rounding, and missing
-value policy must be unit-tested before the contract is marked implemented.
+All mandatory values are finite and range-checked before projection. CARLA
+throttle and brake commands must be in `[0, 1]`; percentages use
+`std::lround(command * 100)`, i.e. halfway values round away from zero. The
+gear must fit the VSS `int8` range. A malformed mandatory value rejects the
+complete frame instead of publishing a partially corrupt update.
 
 ## Steering semantics
 
@@ -52,6 +55,21 @@ single-track equivalent at `Vehicle.Chassis.Axle.Row1.SteeringAngle`, derived
 from the two front road-wheel angles. Raw commands or wheel angles can be added
 later under a clearly named project overlay if a real consumer needs them.
 
+CARLA/Unreal wheel angles are positive to the right, while VSS follows ISO
+8855 and is positive to the left. Each road-wheel angle is therefore negated.
+For valid, same-direction left and right front angles `δl` and `δr`, the
+single-track equivalent is:
+
+`δ = atan(2 / (cot(δl) + cot(δr)))`
+
+The calculation is performed in radians and returned in degrees. Zero/zero
+maps to zero. Non-finite angles, magnitudes of 90 degrees or more, and
+contradictory non-zero signs make the external steering signal unavailable.
+
+World-space acceleration is inverse-rotated by the ego transform. The CARLA
+vehicle-axis result `(x forward, y right, z up)` becomes the ISO 8855 result
+`(x, -y, z)`.
+
 ## CARLA simulation overlay
 
 The following project-owned paths extend, but do not modify, VSS 6.0:
@@ -64,9 +82,12 @@ The following project-owned paths extend, but do not modify, VSS 6.0:
 | `Vehicle.CarlaSimulation.FrameId` | `uint64` sensor | CARLA simulation frame represented by the sample. |
 | `Vehicle.CarlaSimulation.SimulationTime` | `double`, s | Exact CARLA elapsed simulation time. |
 
-The overlay will be maintained as a versioned `.vspec` artifact before the
-VISS server is implemented. It must use a project namespace and must not be
-presented as part of standard COVESA VSS.
+The versioned artifact is
+[`vss/Vehicle.CarlaSimulation.vspec`](../vss/Vehicle.CarlaSimulation.vspec).
+It is structurally validated in the dependency-free test suite and was also
+merged with the complete VSS 6.0 catalog under `vss-tools` 6.0 `--strict`.
+The merged tree confirms the documented types and units. The overlay uses a
+project namespace and is not presented as part of standard COVESA VSS.
 
 ## Time and synchronization
 
@@ -84,10 +105,19 @@ at 10 Hz and retain their most recent individual data-point timestamp.
 
 ## Missing and unavailable data
 
-The runtime must not replace unavailable values with zero. It either omits the
-data point from a multi-path response or returns the VISS error appropriate to
-the requested path/state. The exact policy will be validated against the
-chosen server implementation.
+The runtime does not replace unavailable optional values with zero. Invalid or
+unavailable RPM and equivalent steering are omitted from the frame snapshot.
+The corresponding VISS per-request error behavior will be validated with the
+M4 server implementation.
+
+## Frame store invariant
+
+The designated owner advances CARLA by exactly one synchronous tick and then
+builds one snapshot from that world frame. Every point in the snapshot shares
+the same anchored UTC timestamp, frame ID, and simulation time. The store
+accepts only strictly increasing frame IDs and replaces its single retained
+snapshot atomically; duplicates and out-of-order frames are rejected. It never
+queues historical frames.
 
 ## Not included in v0.1
 
