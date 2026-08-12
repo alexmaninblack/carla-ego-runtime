@@ -2,7 +2,7 @@
 
 ## Tested baseline
 
-M1–M4 are developed and tested against:
+M1–M5 are developed and tested against:
 
 - CARLA fork: `alexmaninblack/carla`;
 - branch: `macos-apple-silicon`;
@@ -16,6 +16,11 @@ The pinned CARLA commit installs a relocatable `Carla::carla-client` CMake
 package together with the exact public dependency headers, static libraries,
 and third-party licence files used by LibCarla. The runtime never includes a
 CARLA source or build directory directly.
+
+M5 additionally builds the matching arm64 CARLA Python wheel from this same
+commit for the external BehaviorAgent control source. The wheel and its local
+virtual environment remain outside the public runtime repository. See
+[M5 operations and acceptance](m5-operations.md).
 
 ## Install LibCarla
 
@@ -162,6 +167,16 @@ Do not bind outside `127.0.0.1` with the development certificate. Testing from
 a second computer requires a certificate trusted for the server's network name,
 an explicit `--viss-bind-address`, firewall configuration, and the threat review
 listed in the VISS profile.
+
+## Validate M5
+
+Build and install the matching arm64 Python API wheel, then use the checked-in
+M5 runner and fixed route as described in
+[M5 operations and acceptance](m5-operations.md). The local Apple Silicon
+acceptance completed the 767.63 m route visually and across two consecutive
+restart runs. Both independent VISS probes passed in both runs, all processes
+exited cleanly, world settings were restored, and no owned vehicle, GNSS actor,
+or VISS listener remained afterward.
 
 ## Command-line options
 

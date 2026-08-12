@@ -8,6 +8,7 @@
 #include <vector>
 
 int main(int argc, char *argv[]) {
+  std::cout << std::unitbuf;
   std::vector<std::string> arguments;
   arguments.reserve(static_cast<std::size_t>(argc > 0 ? argc - 1 : 0));
   for (int index = 1; index < argc; ++index) {

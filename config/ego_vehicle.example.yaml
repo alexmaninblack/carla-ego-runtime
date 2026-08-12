@@ -1,5 +1,5 @@
-# Planning example only. The runtime uses equivalent command-line flags; YAML
-# parsing is not implemented yet.
+# Reference example only. The runtime uses command-line flags; the executable
+# M5 route configuration is config/m5_town10hd_route.json.
 carla:
   host: 127.0.0.1
   rpc_port: 2000

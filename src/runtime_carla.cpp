@@ -792,6 +792,16 @@ int RunRuntime(const RuntimeOptions &options) {
     }
     std::cout << "Current map: " << map->GetName() << '\n' << std::flush;
 
+    // A newly connected observer has not necessarily received its first
+    // episode-state stream packet yet. Wait for one externally owned tick so
+    // actors spawned by the control source are discoverable.
+    if (!options.tick_owner) {
+      const auto initial_snapshot =
+          world.WaitForTick(std::chrono::milliseconds(options.timeout_ms));
+      std::cout << "Observer synchronized at frame "
+                << initial_snapshot.GetFrame() << '\n';
+    }
+
     auto ego_vehicle = FindEgoVehicle(world, options.role_name);
     std::optional<OwnedActorGuard> owned_actor;
     if (ego_vehicle) {

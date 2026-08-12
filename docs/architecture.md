@@ -17,6 +17,7 @@ flowchart LR
         N -. "Optional future adapter" .-> ROS["ROS 2"]
     end
     C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| K
+    A["Replaceable control source<br/>BehaviorAgent in M5"] -->|"Vehicle control and simulation ticks"| C
     S -->|"JSON over WSS: Read and Subscribe"| E["VISS clients"]
     ROS -.-> X["Autoware, RViz, rosbag, ROS nodes"]
 ```
@@ -42,6 +43,9 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
    overlay.
 7. **VISS server** — exposes the signal tree using the project VISS 3.1
    compatibility profile.
+8. **Control source** — owns the synchronous clock and ego vehicle for routed
+   M5 runs; the C++ telemetry runtime observes its ticks and does not own its
+   actor. See [ADR 0008](decisions/0008-replaceable-external-control-source.md).
 
 ## VISS boundary
 

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   carla_ego_runtime
-  VERSION 0.5.1
+  VERSION 0.6.0
   DESCRIPTION "Native runtime and telemetry gateway for a CARLA ego vehicle"
   LANGUAGES CXX
 )
@@ -203,6 +203,15 @@ if(BUILD_TESTING)
   )
   add_test(NAME runtime_reports_version COMMAND carla-ego-runtime --version)
   add_test(NAME runtime_reports_help COMMAND carla-ego-runtime --help)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME m5_tools
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/m5_tools_test.py"
+    )
+  endif()
   set_tests_properties(
     runtime_reports_version
     PROPERTIES PASS_REGULAR_EXPRESSION "carla-ego-runtime ${PROJECT_VERSION}"

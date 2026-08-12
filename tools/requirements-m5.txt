@@ -1,0 +1,7 @@
+# Python 3.9 arm64 environment used for the pinned CARLA 0.10.0 BehaviorAgent.
+build==1.4.4
+networkx==3.2.1
+numpy==2.0.2
+scikit-build-core==1.0.3
+shapely==2.0.7
+wheel==0.48.0

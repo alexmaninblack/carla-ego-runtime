@@ -72,14 +72,18 @@ remains deliberately gated by the security checklist.
 
 ## M5 — Driving and operational reliability
 
-- Add a BehaviorAgent route for the initial autonomous drive.
-- Keep the control source replaceable for future external control.
-- Add configuration validation, structured logging, and run manifests.
-- Maintain the pinned CARLA commit and reproducible installation runbook.
-- Run endurance and restart tests.
+- [x] Add a BehaviorAgent route for the initial autonomous drive.
+- [x] Keep the control source replaceable for future external control.
+- [x] Add configuration validation, structured logging, and run manifests.
+- [x] Maintain the pinned CARLA commit and reproducible installation runbook.
+- [x] Run bounded endurance and restart tests.
 
 Exit criterion: the ego vehicle drives a repeatable route while VISS telemetry
 is streamed continuously and the runtime can recover from clean restarts.
+
+Status: locally satisfied on the pinned Apple Silicon baseline. The acceptance
+route, independent VISS probes, resource cleanup, and two-run restart sequence
+are recorded in per-run manifests outside the repository.
 
 ## Deferred
 

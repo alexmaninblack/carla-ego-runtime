@@ -5,6 +5,7 @@
 /cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
+/runs/
 
 # Editors and operating systems
 .DS_Store

@@ -6,10 +6,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> The local M4 path is implemented. The runtime owns a synchronous 20 Hz
-> simulation clock, retains one timestamped VSS snapshot, and exposes it through
-> a TLS-only VISS 3.1 WebSocket endpoint. Binding outside loopback remains an
-> explicit deployment and security step.
+> The local M5 path is implemented. A replaceable BehaviorAgent control source
+> owns a repeatable route and synchronous clock while the C++ runtime observes
+> every frame and exposes telemetry through a TLS-only VISS 3.1 endpoint.
+> Binding outside loopback remains an explicit deployment and security step.
 
 ## Current capabilities
 
@@ -36,6 +36,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 - a small independent TLS VISS client for acceptance tests;
 - a dependency-free build mode for CLI tests and documentation CI;
 - a native build mode against an installed `Carla::carla-client` package.
+- a deterministic `Town10HD_Opt` BehaviorAgent route with a replaceable
+  process boundary for future control sources;
+- validated M5 JSON configuration, structured event logs, redacted run
+  manifests, independent VISS probes, and restart testing.
 
 Run `carla-ego-runtime --help` for all connection and vehicle options.
 
@@ -152,7 +156,12 @@ offset is restored to zero when the runtime exits. The vehicle is controlled by
 CARLA's Traffic Manager rather than by teleporting it between road positions.
 
 The CARLA server must already be listening on the configured RPC address. See
-the complete [native macOS setup and M4 runbook](docs/carla-setup-macos.md).
+the complete [native macOS setup](docs/carla-setup-macos.md).
+
+For the repeatable M5 route and restart/endurance acceptance workflow, see
+[M5 operations and acceptance](docs/m5-operations.md). The route runner starts
+CARLA's official Python BehaviorAgent as the tick owner and the C++ runtime as a
+non-owning telemetry observer, then records a manifest and structured log.
 
 ## Documentation
 
@@ -162,6 +171,7 @@ the complete [native macOS setup and M4 runbook](docs/carla-setup-macos.md).
 - [VISS/VSS telemetry contract](docs/telemetry-contract.md)
 - [Role of ROS 2](docs/ros2-role.md)
 - [Roadmap](docs/roadmap.md)
+- [M5 operations and acceptance](docs/m5-operations.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies and licences](THIRD_PARTY.md)
