@@ -49,7 +49,7 @@
     "dashboard_period_ms": 250,
     "chase_camera": true,
     "chase_camera_response": 10,
-    "chase_camera_update_hz": 60,
+    "chase_camera_update_hz": 30,
     "exposure_offset": -0.35
   }
 }

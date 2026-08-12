@@ -82,6 +82,8 @@ class M61ToolTests(unittest.TestCase):
         self.assertEqual(autopilot["traffic_manager_port"], 8000)
         self.assertEqual(autopilot["random_seed"], 42)
         self.assertFalse(autopilot["automatic_lane_change"])
+        self.assertAlmostEqual(config["simulation"]["fixed_delta_seconds"], 1 / 30)
+        self.assertEqual(config["runtime"]["chase_camera_update_hz"], 30)
 
     def test_keyboard_command_uses_private_run_artifact_paths(self):
         arguments = type(

@@ -30,6 +30,7 @@ endif()
 
 add_library(
   carla-ego-runtime-core STATIC
+  src/chase_camera.cpp
   src/runtime_options.cpp
   src/gnss.cpp
   src/vehicle_state.cpp
@@ -168,6 +169,11 @@ if(BUILD_TESTING)
   target_link_libraries(gnss-test PRIVATE carla-ego-runtime-core)
   carla_ego_enable_warnings(gnss-test)
   add_test(NAME gnss COMMAND gnss-test)
+
+  add_executable(chase-camera-test tests/chase_camera_test.cpp)
+  target_link_libraries(chase-camera-test PRIVATE carla-ego-runtime-core)
+  carla_ego_enable_warnings(chase-camera-test)
+  add_test(NAME chase_camera COMMAND chase-camera-test)
 
   if(CARLA_EGO_WITH_VISS)
     add_executable(viss-protocol-test tests/viss_protocol_test.cpp)

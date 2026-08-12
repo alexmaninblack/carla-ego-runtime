@@ -37,6 +37,13 @@ last automatic control to the incoming manual control for 0.3 seconds. This
 reduces the visible steering or pedal step without hiding the operator's new
 command.
 
+Unreal applies spectator transforms only on physics boundaries, so the camera
+derives its target from the frame-aligned world snapshot and performs exactly
+one smoothing update per 30 Hz physics tick. It no longer runs a competing 60
+Hz RPC thread or issues catch-up camera updates. A 40 Hz live test was rejected
+because Town10HD could not sustain it on the target Mac; the stable 30 Hz
+cadence avoids the resulting long frames.
+
 ## Safety rules
 
 - Client disconnect, ownership heartbeat expiry, panel close, and shutdown

@@ -1,3 +1,4 @@
+#include "carla_ego_runtime/chase_camera.hpp"
 #include "carla_ego_runtime/gnss.hpp"
 #include "carla_ego_runtime/runtime.hpp"
 #include "carla_ego_runtime/vehicle_state.hpp"
@@ -35,7 +36,6 @@
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -345,113 +345,64 @@ bool ReachedStopCondition(const RuntimeOptions &options,
              started_at + std::chrono::seconds(options.run_seconds);
 }
 
-carla::geom::Transform ChaseCameraTransform(const cc::Vehicle &vehicle) {
-  const auto vehicle_transform = vehicle.GetTransform();
+CameraPose ChaseCameraPose(const carla::geom::Transform &vehicle_transform) {
   const auto forward = vehicle_transform.GetForwardVector();
-  carla::geom::Location location{
+  return {
       vehicle_transform.location.x - 8.0f * forward.x,
       vehicle_transform.location.y - 8.0f * forward.y,
-      vehicle_transform.location.z + 3.5f};
-  carla::geom::Rotation rotation{-12.0f, vehicle_transform.rotation.yaw, 0.0f};
-  return {location, rotation};
-}
-
-float InterpolateAngle(float current, float target, double factor) {
-  const auto delta = std::remainder(target - current, 360.0f);
-  return current + static_cast<float>(factor) * delta;
-}
-
-carla::geom::Transform
-InterpolateTransform(const carla::geom::Transform &current,
-                     const carla::geom::Transform &target, double factor) {
-  const auto interpolate = [factor](float from, float to) {
-    return from + static_cast<float>(factor) * (to - from);
+      vehicle_transform.location.z + 3.5f,
+      -12.0,
+      vehicle_transform.rotation.yaw,
+      0.0,
   };
-  carla::geom::Location location{
-      interpolate(current.location.x, target.location.x),
-      interpolate(current.location.y, target.location.y),
-      interpolate(current.location.z, target.location.z)};
-  carla::geom::Rotation rotation{
-      InterpolateAngle(current.rotation.pitch, target.rotation.pitch, factor),
-      InterpolateAngle(current.rotation.yaw, target.rotation.yaw, factor),
-      InterpolateAngle(current.rotation.roll, target.rotation.roll, factor)};
-  return {location, rotation};
 }
 
-class SmoothChaseCamera {
+carla::geom::Transform CarlaTransform(const CameraPose &pose) {
+  return {
+      carla::geom::Location{static_cast<float>(pose.x),
+                            static_cast<float>(pose.y),
+                            static_cast<float>(pose.z)},
+      carla::geom::Rotation{static_cast<float>(pose.pitch),
+                            static_cast<float>(pose.yaw),
+                            static_cast<float>(pose.roll)},
+  };
+}
+
+class SnapshotChaseCamera {
 public:
-  SmoothChaseCamera(carla::SharedPtr<cc::Actor> spectator,
-                    carla::geom::Transform initial_transform, double response,
-                    std::uint32_t update_hz)
-      : spectator_(std::move(spectator)), current_(initial_transform),
-        target_(initial_transform), response_(response),
-        period_(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-            std::chrono::duration<double>(1.0 / update_hz))) {
-    spectator_->SetTransform(initial_transform);
-    worker_ = std::jthread(
-        [this](const std::stop_token &stop_token) { Run(stop_token); });
+  SnapshotChaseCamera(carla::SharedPtr<cc::Actor> spectator,
+                      CameraPose initial_pose, double response,
+                      std::uint32_t maximum_update_hz)
+      : spectator_(std::move(spectator)), current_(initial_pose),
+        response_(response), minimum_update_interval_seconds_(
+                                 1.0 / maximum_update_hz) {
+    spectator_->SetTransform(CarlaTransform(initial_pose));
   }
 
-  SmoothChaseCamera(const SmoothChaseCamera &) = delete;
-  SmoothChaseCamera &operator=(const SmoothChaseCamera &) = delete;
+  SnapshotChaseCamera(const SnapshotChaseCamera &) = delete;
+  SnapshotChaseCamera &operator=(const SnapshotChaseCamera &) = delete;
 
-  ~SmoothChaseCamera() { Stop(); }
-
-  void SetTarget(carla::geom::Transform target) {
-    std::lock_guard lock(mutex_);
-    target_ = target;
-  }
-
-  void ThrowIfFailed() const {
-    std::lock_guard lock(mutex_);
-    if (failure_) {
-      std::rethrow_exception(failure_);
+  void SetFrame(CameraPose pose, double simulation_time_seconds) {
+    double elapsed = 0.0;
+    if (last_simulation_time_seconds_.has_value()) {
+      elapsed = simulation_time_seconds - *last_simulation_time_seconds_;
+      if (elapsed + 1e-9 < minimum_update_interval_seconds_) {
+        return;
+      }
     }
-  }
-
-  void Stop() noexcept {
-    if (worker_.joinable()) {
-      worker_.request_stop();
-      worker_.join();
-    }
+    const double factor = elapsed > 0.0 ? 1.0 - std::exp(-response_ * elapsed)
+                                        : 1.0;
+    current_ = InterpolateCameraPose(current_, pose, factor);
+    spectator_->SetTransform(CarlaTransform(current_));
+    last_simulation_time_seconds_ = simulation_time_seconds;
   }
 
 private:
-  void Run(const std::stop_token &stop_token) noexcept {
-    auto previous = std::chrono::steady_clock::now();
-    auto next_update = previous;
-    try {
-      while (!stop_token.stop_requested()) {
-        next_update += period_;
-        const auto now = std::chrono::steady_clock::now();
-        const double elapsed =
-            std::chrono::duration<double>(now - previous).count();
-        previous = now;
-
-        carla::geom::Transform target;
-        {
-          std::lock_guard lock(mutex_);
-          target = target_;
-        }
-        const double factor = 1.0 - std::exp(-response_ * elapsed);
-        current_ = InterpolateTransform(current_, target, factor);
-        spectator_->SetTransform(current_);
-        std::this_thread::sleep_until(next_update);
-      }
-    } catch (...) {
-      std::lock_guard lock(mutex_);
-      failure_ = std::current_exception();
-    }
-  }
-
   carla::SharedPtr<cc::Actor> spectator_;
-  carla::geom::Transform current_;
-  carla::geom::Transform target_;
+  CameraPose current_;
   double response_;
-  std::chrono::steady_clock::duration period_;
-  mutable std::mutex mutex_;
-  std::exception_ptr failure_;
-  std::jthread worker_;
+  double minimum_update_interval_seconds_;
+  std::optional<double> last_simulation_time_seconds_;
 };
 
 void RunConsoleCommand(cc::Client &client, const std::string &command) {
@@ -599,18 +550,18 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     std::cout << "Traffic Manager autopilot: enabled (synchronous)\n";
   }
 
-  std::unique_ptr<SmoothChaseCamera> chase_camera;
+  std::unique_ptr<SnapshotChaseCamera> chase_camera;
   if (options.chase_camera) {
     auto spectator = world.GetSpectator();
     if (!spectator) {
       throw std::runtime_error("CARLA returned no spectator actor");
     }
-    chase_camera = std::make_unique<SmoothChaseCamera>(
-        std::move(spectator), ChaseCameraTransform(*vehicle),
+    chase_camera = std::make_unique<SnapshotChaseCamera>(
+        std::move(spectator), ChaseCameraPose(vehicle->GetTransform()),
         options.chase_camera_response, options.chase_camera_update_hz);
-    std::cout << "Chase camera: smooth " << options.chase_camera_update_hz
-              << " Hz interpolation (response " << options.chase_camera_response
-              << ")\n";
+    std::cout << "Chase camera: frame-locked snapshot smoothing (maximum "
+              << options.chase_camera_update_hz << " Hz, response "
+              << options.chase_camera_response << ")\n";
   }
 
   std::optional<ExposureOffsetGuard> exposure_guard;
@@ -682,6 +633,16 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
         options.tick_owner ? (world.Tick(timeout), world.GetSnapshot())
                            : world.WaitForTick(timeout);
     const double simulation_time_s = snapshot.GetTimestamp().elapsed_seconds;
+    if (chase_camera) {
+      const auto actor_snapshot = snapshot.Find(vehicle->GetId());
+      if (!actor_snapshot.has_value()) {
+        throw std::runtime_error(
+            "ego vehicle is unavailable for chase-camera frame " +
+            std::to_string(snapshot.GetFrame()));
+      }
+      chase_camera->SetFrame(ChaseCameraPose(actor_snapshot->transform),
+                             simulation_time_s);
+    }
     if (!clock_anchor.has_value()) {
       clock_anchor.emplace(simulation_time_s, std::chrono::system_clock::now());
     }
@@ -706,11 +667,6 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     }
 #endif
     ++frame_count;
-
-    if (chase_camera) {
-      chase_camera->SetTarget(ChaseCameraTransform(*vehicle));
-      chase_camera->ThrowIfFailed();
-    }
 
     if (frame_count == 1 || frame_count % options.log_every_frames == 0) {
       std::cout << "VSS frame=" << normalized.frame_id
@@ -743,10 +699,6 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
               << metrics.coalesced_subscription_intervals << '\n';
   }
 #endif
-  if (chase_camera) {
-    chase_camera->Stop();
-    chase_camera->ThrowIfFailed();
-  }
   if (!gnss_guard.Destroy()) {
     throw std::runtime_error("failed to destroy GNSS sensor");
   }

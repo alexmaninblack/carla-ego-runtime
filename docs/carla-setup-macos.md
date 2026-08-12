@@ -197,7 +197,7 @@ no owned vehicle, GNSS actor, or VISS listener remained afterward.
 | `--autopilot` | off | Enable synchronous Traffic Manager control |
 | `--chase-camera` | off | Follow the ego vehicle with the spectator |
 | `--chase-camera-response` | `10` | Camera smoothing response; lower values are smoother but lag more |
-| `--chase-camera-update-hz` | `60` | Independent chase-camera interpolation rate |
+| `--chase-camera-update-hz` | `60` | Maximum frame-locked chase-camera update rate |
 | `--exposure-offset` | `0` | Temporary Unreal exposure compensation in EV, restored on exit |
 | `--gnss-sensor-tick-seconds` | `0.1` | GNSS measurement period |
 | `--gnss-max-age-seconds` | `0.25` | Omit older retained GNSS fixes |

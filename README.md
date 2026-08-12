@@ -157,9 +157,10 @@ GNSS, run:
 ```
 
 This keeps the existing 20 Hz simulation step but paces it against wall-clock
-time. The chase camera interpolates independently at 60 Hz, and the exposure
-offset is restored to zero when the runtime exits. The vehicle is controlled by
-CARLA's Traffic Manager rather than by teleporting it between road positions.
+time. The chase camera smooths one frame-aligned snapshot per physics tick, up
+to the configured maximum rate. The exposure offset is restored to zero when
+the runtime exits. The vehicle is controlled by CARLA's Traffic Manager rather
+than by teleporting it between road positions.
 
 The CARLA server must already be listening on the configured RPC address. See
 the complete [native macOS setup](docs/carla-setup-macos.md).

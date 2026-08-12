@@ -286,7 +286,7 @@ Options:
       --chase-camera-response N Camera smoothing response (default: 10;
                                 lower values are smoother but add more lag)
       --chase-camera-update-hz N
-                                Camera interpolation rate (default: 60)
+                                Maximum frame-locked camera rate (default: 60)
       --exposure-offset EV      Unreal exposure compensation for this run
                                 (default: 0; restored on exit)
       --gnss-sensor-tick-seconds S
