@@ -54,18 +54,21 @@ same simulator run during a continuous drive.
 
 ## M4 — VISS 3.1 service
 
-- Compare an embedded C++ endpoint with integration through COVESA VISSR.
-- Record the implementation decision and MPL-2.0 obligations.
-- Implement the documented JSON-over-Secure-WebSocket profile.
-- Support `get`, `subscribe`, `unsubscribe`, and protocol-valid read-only
+- [x] Compare an embedded C++ endpoint with integration through COVESA VISSR.
+- [x] Record the implementation decision and MPL-2.0 obligations.
+- [x] Implement the documented JSON-over-Secure-WebSocket profile.
+- [x] Support `get`, `subscribe`, `unsubscribe`, and protocol-valid read-only
   responses to `set`.
-- Add bounded buffering, reconnect handling, and dropped-update metrics.
-- Test TLS, malformed requests, timestamps, path selection, and subscriptions.
-- Test a consumer on the same Mac and on a second networked machine.
+- [x] Add bounded buffering, reconnect handling, and dropped-update metrics.
+- [x] Test TLS, malformed requests, timestamps, path selection, and subscriptions.
+- [x] Test an independent consumer on the same Mac.
+- [ ] Repeat the consumer test from a second networked machine after installing
+  a trusted certificate and completing the deployment threat review.
 
-Exit criterion: an independent VISS client receives the documented VSS state
-and GNSS signals with observable latency and loss behaviour, and the
-compatibility suite passes.
+Local exit criterion: satisfied. An independent VISS client receives the
+documented live vehicle state and GNSS signals with observable latency and loss
+behaviour, and the compatibility suite passes. External network exposure
+remains deliberately gated by the security checklist.
 
 ## M5 — Driving and operational reliability
 

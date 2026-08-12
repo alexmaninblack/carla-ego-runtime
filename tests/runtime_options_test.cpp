@@ -26,7 +26,7 @@ void CheckThrows(Callable callable, const std::string &message) {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   using carla_ego_runtime::Command;
@@ -44,6 +44,11 @@ int main() {
   Check(defaults.options.gnss_max_age_seconds == 0.25,
         "default GNSS freshness threshold");
   Check(defaults.options.log_every_frames == 1, "log every frame by default");
+  Check(!defaults.options.viss_enabled, "VISS endpoint disabled by default");
+  Check(defaults.options.viss_bind_address == "127.0.0.1",
+        "default VISS bind address is loopback");
+  Check(defaults.options.viss_port == 6443, "default VISS port");
+  Check(defaults.options.viss_max_clients == 8, "default VISS client cap");
   Check(defaults.options.tick_owner, "tick ownership enabled by default");
   Check(defaults.options.spawn_if_missing, "spawning enabled by default");
   Check(defaults.options.require_matching_versions,
@@ -52,15 +57,51 @@ int main() {
   Check(!defaults.options.autopilot, "autopilot disabled by default");
   Check(!defaults.options.chase_camera, "chase camera disabled by default");
 
-  const auto custom = ParseCommandLine(
-      {"--host", "carla.local", "--port", "2100", "--timeout-ms", "5000",
-       "--role-name", "ego", "--blueprint", "vehicle.tesla.model3",
-       "--spawn-point-index", "7", "--run-seconds", "15", "--max-frames",
-       "42", "--fixed-delta-seconds", "0.1",
-       "--gnss-sensor-tick-seconds", "0.2", "--gnss-max-age-seconds", "0.6",
-       "--log-every-frames", "10",
-       "--observe-ticks", "--real-time", "--autopilot", "--chase-camera",
-       "--no-spawn", "--allow-version-mismatch"});
+  const auto custom = ParseCommandLine({"--host",
+                                        "carla.local",
+                                        "--port",
+                                        "2100",
+                                        "--timeout-ms",
+                                        "5000",
+                                        "--role-name",
+                                        "ego",
+                                        "--blueprint",
+                                        "vehicle.tesla.model3",
+                                        "--spawn-point-index",
+                                        "7",
+                                        "--run-seconds",
+                                        "15",
+                                        "--max-frames",
+                                        "42",
+                                        "--fixed-delta-seconds",
+                                        "0.1",
+                                        "--gnss-sensor-tick-seconds",
+                                        "0.2",
+                                        "--gnss-max-age-seconds",
+                                        "0.6",
+                                        "--log-every-frames",
+                                        "10",
+                                        "--viss",
+                                        "--viss-bind-address",
+                                        "0.0.0.0",
+                                        "--viss-port",
+                                        "7443",
+                                        "--viss-cert",
+                                        "server.pem",
+                                        "--viss-key",
+                                        "server-key.pem",
+                                        "--viss-max-clients",
+                                        "4",
+                                        "--viss-max-subscriptions",
+                                        "6",
+                                        "--viss-max-pending-messages",
+                                        "3",
+                                        "--observe-ticks",
+                                        "--real-time",
+                                        "--autopilot",
+                                        "--chase-camera",
+                                        "--no-spawn",
+                                        "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
   Check(custom.options.port == 2100, "custom port");
   Check(custom.options.timeout_ms == 5000, "custom timeout");
@@ -76,6 +117,19 @@ int main() {
   Check(custom.options.gnss_max_age_seconds == 0.6,
         "custom GNSS freshness threshold");
   Check(custom.options.log_every_frames == 10, "custom log interval");
+  Check(custom.options.viss_enabled, "VISS endpoint enabled");
+  Check(custom.options.viss_bind_address == "0.0.0.0",
+        "custom VISS bind address");
+  Check(custom.options.viss_port == 7443, "custom VISS port");
+  Check(custom.options.viss_certificate_chain_file == "server.pem",
+        "custom VISS certificate");
+  Check(custom.options.viss_private_key_file == "server-key.pem",
+        "custom VISS private key");
+  Check(custom.options.viss_max_clients == 4, "custom VISS client cap");
+  Check(custom.options.viss_max_subscriptions_per_client == 6,
+        "custom VISS subscription cap");
+  Check(custom.options.viss_max_pending_messages_per_client == 3,
+        "custom VISS outbound queue cap");
   Check(!custom.options.tick_owner, "observer mode");
   Check(!custom.options.spawn_if_missing, "spawning disabled");
   Check(!custom.options.require_matching_versions, "version mismatch allowed");
@@ -108,6 +162,12 @@ int main() {
               "zero GNSS measurement period rejected");
   CheckThrows([] { ParseCommandLine({"--gnss-max-age-seconds", "61"}); },
               "oversized GNSS freshness threshold rejected");
+  CheckThrows([] { ParseCommandLine({"--viss"}); },
+              "VISS without TLS material rejected");
+  CheckThrows([] { ParseCommandLine({"--viss-port", "0"}); },
+              "zero VISS port rejected");
+  CheckThrows([] { ParseCommandLine({"--viss-max-clients", "0"}); },
+              "zero VISS client cap rejected");
 
   if (failures == 0) {
     std::cout << "runtime option tests passed\n";

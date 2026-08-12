@@ -6,10 +6,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> M3 vehicle-state and GNSS collection is implemented. The runtime owns a
-> synchronous 20 Hz simulation clock by default, publishes exactly one
-> timestamped VSS snapshot per CARLA frame, and retains only the latest
-> snapshot. The network-facing VISS server remains the next milestone.
+> The local M4 path is implemented. The runtime owns a synchronous 20 Hz
+> simulation clock, retains one timestamped VSS snapshot, and exposes it through
+> a TLS-only VISS 3.1 WebSocket endpoint. Binding outside loopback remains an
+> explicit deployment and security step.
 
 ## Current capabilities
 
@@ -29,6 +29,11 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   and independent data-point timestamps;
 - transport-independent normalization and VSS 6.0 projection;
 - a bounded latest-value signal store and project-owned simulation overlay;
+- a TLS 1.2+ VISS 3.1 endpoint with the mandatory `VISSv3` subprotocol;
+- VISS Get, time-based Subscribe/Unsubscribe, and read-only Update errors;
+- bounded per-client delivery with connection, error, event-drop, and
+  coalescing metrics;
+- a small independent TLS VISS client for acceptance tests;
 - a dependency-free build mode for CLI tests and documentation CI;
 - a native build mode against an installed `Carla::carla-client` package.
 
@@ -85,7 +90,8 @@ Install LibCarla to a local prefix, then enable native connectivity:
 cmake -S . -B build-carla \
   -DCMAKE_BUILD_TYPE=Release \
   -DCARLA_EGO_WITH_CARLA=ON \
-  -DCMAKE_PREFIX_PATH=/path/to/carla-install
+  -DCARLA_EGO_WITH_VISS=ON \
+  -DCMAKE_PREFIX_PATH="/path/to/carla-install;/path/to/openssl"
 cmake --build build-carla
 ctest --test-dir build-carla --output-on-failure
 ./build-carla/carla-ego-runtime --max-frames 20
@@ -94,6 +100,26 @@ ctest --test-dir build-carla --output-on-failure
 This collects one simulated second at the default fixed step of 0.05 seconds.
 Use `--observe-ticks` only when another client is the designated synchronous
 tick owner.
+
+To enable M4, create or install a TLS certificate outside the repository and
+start the loopback endpoint:
+
+```sh
+./build-carla/carla-ego-runtime \
+  --max-frames 0 --real-time --autopilot \
+  --viss --viss-cert /private/path/server-cert.pem \
+  --viss-key /private/path/server-key.pem
+```
+
+Then use the separately built client to read a live signal:
+
+```sh
+./build-carla/carla-viss-client \
+  --host localhost --ca /private/path/trusted-ca.pem \
+  --request '{"action":"get","path":"Vehicle.Speed","requestId":"speed-1"}'
+```
+
+Certificate and key files are ignored by Git and must not be committed.
 
 For a smooth visual M3 demonstration with one physics-driven ego vehicle and
 GNSS, run:
@@ -115,7 +141,7 @@ time. The vehicle is controlled by CARLA's Traffic Manager rather than by
 teleporting it between road positions.
 
 The CARLA server must already be listening on the configured RPC address. See
-the complete [native macOS setup and M3 runbook](docs/carla-setup-macos.md).
+the complete [native macOS setup and M4 runbook](docs/carla-setup-macos.md).
 
 ## Documentation
 
@@ -127,6 +153,7 @@ the complete [native macOS setup and M3 runbook](docs/carla-setup-macos.md).
 - [Roadmap](docs/roadmap.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
+- [Third-party dependencies and licences](THIRD_PARTY.md)
 
 ## License
 

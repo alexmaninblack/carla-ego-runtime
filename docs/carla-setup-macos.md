@@ -2,7 +2,7 @@
 
 ## Tested baseline
 
-M1–M3 are developed and tested against:
+M1–M4 are developed and tested against:
 
 - CARLA fork: `alexmaninblack/carla`;
 - branch: `macos-apple-silicon`;
@@ -42,7 +42,8 @@ not be committed to this repository.
 cmake -S . -B build-carla \
   -DCMAKE_BUILD_TYPE=Release \
   -DCARLA_EGO_WITH_CARLA=ON \
-  -DCMAKE_PREFIX_PATH=/path/to/carla-install
+  -DCARLA_EGO_WITH_VISS=ON \
+  -DCMAKE_PREFIX_PATH="/path/to/carla-install;/path/to/openssl"
 cmake --build build-carla
 ctest --test-dir build-carla --output-on-failure
 ```
@@ -101,6 +102,67 @@ The runtime published 240 vehicle-state VSS snapshots, accepted exactly 120
 10 Hz GNSS fixes, rejected none, projected 19 points when all optional values
 were available, and destroyed GNSS actor `36` before ego vehicle `35`.
 
+## Enable and validate M4
+
+The VISS build needs OpenSSL 3 and uses the Boost.Beast, Asio, JSON, and System
+headers already distributed in the pinned LibCarla install. On Homebrew macOS,
+`/opt/homebrew/opt/openssl@3` is a suitable second CMake prefix.
+
+Use a trusted certificate for any persistent deployment. For a short loopback
+development test only, a self-signed certificate may be generated outside the
+repository:
+
+```sh
+mkdir -p /private/tmp/carla-viss-tls
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+  -keyout /private/tmp/carla-viss-tls/server-key.pem \
+  -out /private/tmp/carla-viss-tls/server-cert.pem \
+  -days 1 -subj /CN=localhost \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1
+```
+
+Start a live loopback service:
+
+```sh
+./build-carla/carla-ego-runtime \
+  --max-frames 0 --real-time --autopilot --log-every-frames 100 \
+  --viss \
+  --viss-cert /private/tmp/carla-viss-tls/server-cert.pem \
+  --viss-key /private/tmp/carla-viss-tls/server-key.pem
+```
+
+Read speed from a second terminal with certificate and host-name verification:
+
+```sh
+./build-carla/carla-viss-client \
+  --host localhost --port 6443 \
+  --ca /private/tmp/carla-viss-tls/server-cert.pem \
+  --request '{"action":"get","path":"Vehicle.Speed","requestId":"speed-1"}'
+```
+
+Read a subscription acknowledgement and two events:
+
+```sh
+./build-carla/carla-viss-client \
+  --host localhost --port 6443 \
+  --ca /private/tmp/carla-viss-tls/server-cert.pem --messages 3 \
+  --request '{"action":"subscribe","path":"Vehicle","filter":[{"variant":"paths","parameter":["Speed","Chassis.Brake.PedalPosition","CurrentLocation.*"]},{"variant":"timebased","parameter":{"period":"100"}}],"requestId":"telemetry-1"}'
+```
+
+The local M4 acceptance run on `Town10HD_Opt` used matching CARLA/LibCarla
+`0.10.0`. The runtime published 900 state frames and accepted 450 GNSS fixes
+with no rejections. An independent verified-TLS client read live speed, all
+three `Vehicle.CurrentLocation.*` points, and consecutive 100 ms subscription
+events. Server metrics reported two accepted clients, two events, zero dropped
+events, and zero coalesced intervals. The automated network test additionally
+verified malformed requests, Update rejection, reconnect isolation, TLS
+version, and rejection of a non-`VISSv3` handshake.
+
+Do not bind outside `127.0.0.1` with the development certificate. Testing from
+a second computer requires a certificate trusted for the server's network name,
+an explicit `--viss-bind-address`, firewall configuration, and the threat review
+listed in the VISS profile.
+
 ## Command-line options
 
 | Option | Default | Meaning |
@@ -122,6 +184,14 @@ were available, and destroyed GNSS actor `36` before ego vehicle `35`.
 | `--gnss-sensor-tick-seconds` | `0.1` | GNSS measurement period |
 | `--gnss-max-age-seconds` | `0.25` | Omit older retained GNSS fixes |
 | `--log-every-frames` | `1` | Print one sample summary every N frames |
+| `--viss` | off | Enable the TLS-only VISS endpoint |
+| `--viss-bind-address` | `127.0.0.1` | VISS listener address |
+| `--viss-port` | `6443` | VISS Secure WebSocket port |
+| `--viss-cert` | none | PEM certificate chain, required with `--viss` |
+| `--viss-key` | none | PEM private key, required with `--viss` |
+| `--viss-max-clients` | `8` | Concurrent VISS client cap |
+| `--viss-max-subscriptions` | `16` | Subscription cap per client |
+| `--viss-max-pending-messages` | `8` | Outbound queue cap per client |
 | `--observe-ticks` | off | Wait for an external tick owner without changing world settings |
 
 The runtime tries every recommended map spawn point in deterministic order if
@@ -140,3 +210,7 @@ the blueprint is absent or every spawn point is blocked.
   start with an existing vehicle carrying the requested `role_name`.
 - **Observer times out** — no other client is advancing the synchronous world;
   start the designated owner or omit `--observe-ticks`.
+- **VISS certificate error** — provide readable PEM certificate and private-key
+  files whose key pair matches; do not add them to the repository.
+- **VISS host verification error** — connect with a host name present in the
+  certificate SAN and use the CA that issued that certificate.

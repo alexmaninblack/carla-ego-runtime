@@ -20,7 +20,8 @@ Integer ParseUnsigned(std::string_view text, std::string_view option) {
   const auto *end = begin + text.size();
   const auto result = std::from_chars(begin, end, parsed);
   if (result.ec != std::errc{} || result.ptr != end ||
-      parsed > static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
+      parsed >
+          static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
     throw std::invalid_argument("invalid value for " + std::string(option) +
                                 ": " + std::string(text));
   }
@@ -61,7 +62,7 @@ double ParsePositiveDouble(const std::string &text, std::string_view option) {
   return value;
 }
 
-}  // namespace
+} // namespace
 
 ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
   ParsedCommandLine result;
@@ -77,8 +78,8 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
       result.options.host = RequireValue(arguments, index);
       RequireNonEmpty(result.options.host, "--host");
     } else if (argument == "--port") {
-      result.options.port =
-          ParseUnsigned<std::uint16_t>(RequireValue(arguments, index), "--port");
+      result.options.port = ParseUnsigned<std::uint16_t>(
+          RequireValue(arguments, index), "--port");
       if (result.options.port == 0) {
         throw std::invalid_argument("--port must be between 1 and 65535");
       }
@@ -132,6 +133,51 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
         throw std::invalid_argument(
             "--gnss-max-age-seconds must be no greater than 60.0");
       }
+    } else if (argument == "--viss") {
+      result.options.viss_enabled = true;
+    } else if (argument == "--viss-bind-address") {
+      result.options.viss_bind_address = RequireValue(arguments, index);
+      RequireNonEmpty(result.options.viss_bind_address, "--viss-bind-address");
+    } else if (argument == "--viss-port") {
+      result.options.viss_port = ParseUnsigned<std::uint16_t>(
+          RequireValue(arguments, index), "--viss-port");
+      if (result.options.viss_port == 0) {
+        throw std::invalid_argument("--viss-port must be between 1 and 65535");
+      }
+    } else if (argument == "--viss-cert") {
+      result.options.viss_certificate_chain_file =
+          RequireValue(arguments, index);
+      RequireNonEmpty(result.options.viss_certificate_chain_file,
+                      "--viss-cert");
+    } else if (argument == "--viss-key") {
+      result.options.viss_private_key_file = RequireValue(arguments, index);
+      RequireNonEmpty(result.options.viss_private_key_file, "--viss-key");
+    } else if (argument == "--viss-max-clients") {
+      result.options.viss_max_clients = ParseUnsigned<std::size_t>(
+          RequireValue(arguments, index), "--viss-max-clients");
+      if (result.options.viss_max_clients == 0 ||
+          result.options.viss_max_clients > 128) {
+        throw std::invalid_argument(
+            "--viss-max-clients must be between 1 and 128");
+      }
+    } else if (argument == "--viss-max-subscriptions") {
+      result.options.viss_max_subscriptions_per_client =
+          ParseUnsigned<std::size_t>(RequireValue(arguments, index),
+                                     "--viss-max-subscriptions");
+      if (result.options.viss_max_subscriptions_per_client == 0 ||
+          result.options.viss_max_subscriptions_per_client > 1024) {
+        throw std::invalid_argument(
+            "--viss-max-subscriptions must be between 1 and 1024");
+      }
+    } else if (argument == "--viss-max-pending-messages") {
+      result.options.viss_max_pending_messages_per_client =
+          ParseUnsigned<std::size_t>(RequireValue(arguments, index),
+                                     "--viss-max-pending-messages");
+      if (result.options.viss_max_pending_messages_per_client == 0 ||
+          result.options.viss_max_pending_messages_per_client > 1024) {
+        throw std::invalid_argument(
+            "--viss-max-pending-messages must be between 1 and 1024");
+      }
     } else if (argument == "--observe-ticks") {
       result.options.tick_owner = false;
     } else if (argument == "--real-time") {
@@ -153,6 +199,12 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
   // default unless the caller explicitly supplies both limits.
   if (result.options.run_seconds > 0 && !max_frames_was_set) {
     result.options.max_frames = 0;
+  }
+  if (result.options.viss_enabled &&
+      (result.options.viss_certificate_chain_file.empty() ||
+       result.options.viss_private_key_file.empty())) {
+    throw std::invalid_argument(
+        "--viss requires both --viss-cert and --viss-key");
   }
 
   return result;
@@ -188,9 +240,19 @@ Options:
       --gnss-max-age-seconds S  Omit older retained GNSS fixes (default: 0.25)
       --log-every-frames N      Print one sample summary every N frames
                                 (default: 1)
+      --viss                    Enable the TLS-only VISS 3.1 endpoint
+      --viss-bind-address IP    VISS listener address (default: 127.0.0.1)
+      --viss-port PORT          VISS Secure WebSocket port (default: 6443)
+      --viss-cert FILE          PEM TLS certificate chain (required by --viss)
+      --viss-key FILE           PEM TLS private key (required by --viss)
+      --viss-max-clients N      Concurrent client cap (default: 8)
+      --viss-max-subscriptions N
+                                Subscription cap per client (default: 16)
+      --viss-max-pending-messages N
+                                Outbound queue cap per client (default: 8)
       --observe-ticks           Do not own or advance the simulation clock;
                                 wait for another designated tick owner
 )";
 }
 
-}  // namespace carla_ego_runtime
+} // namespace carla_ego_runtime

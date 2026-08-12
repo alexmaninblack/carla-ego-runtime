@@ -1,7 +1,6 @@
 # VISS/VSS telemetry contract v0.1
 
-Status: **implemented for the M3 vehicle-state and GNSS subset**. VISS network
-conformance remains an M4 deliverable.
+Status: **implemented for the M4 vehicle-state, GNSS, and VISS network subset**.
 
 ## Standards baseline
 
@@ -115,8 +114,8 @@ unavailable RPM and equivalent steering are omitted from the frame snapshot.
 Missing, future, malformed, out-of-order, or stale GNSS fixes are likewise
 omitted rather than replaced by zero coordinates. The GNSS callback handoff
 retains at most one ordered fix and exposes accepted/rejected counters.
-The corresponding VISS per-request error behavior will be validated with the
-M4 server implementation.
+Read of an absent path returns VISS `404 unavailable_data`; optional points
+appear automatically in later snapshots when their source is available.
 
 ## Frame store invariant
 

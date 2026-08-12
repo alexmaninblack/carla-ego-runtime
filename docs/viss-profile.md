@@ -47,9 +47,29 @@ interoperability profile, not prohibited forever.
   Since v0.1 exposes sensors and attributes only, attempts to update them
   return the appropriate standard VISS error and never control the vehicle.
 
-The first subscription implementation may support only the filter forms
-required by the initial consumer. Unsupported standard options must receive a
+The implemented filter subset is a `paths` filter for Read and a required
+`timebased` filter plus optional `paths` filter for Subscribe. Time-based
+periods are decimal millisecond strings from `50` through `60000`. Relative
+path patterns may contain `*`. Unsupported standard options receive a
 protocol-valid error rather than being silently ignored.
+
+VISS values are encoded as strings, including numeric data. A Read of one leaf
+returns one data object; a branch or multi-path selection returns an array.
+Every data point preserves its source timestamp and every response/event has a
+separate server-execution `ts`. Subscription state belongs to the WebSocket
+connection that created it and is discarded on reconnect.
+
+Example Read request:
+
+```json
+{"action":"get","path":"Vehicle.Speed","requestId":"speed-1"}
+```
+
+Example subscription request:
+
+```json
+{"action":"subscribe","path":"Vehicle","filter":[{"variant":"paths","parameter":["Speed","CurrentLocation.*"]},{"variant":"timebased","parameter":{"period":"100"}}],"requestId":"telemetry-1"}
+```
 
 ## Signal tree and timestamps
 
@@ -64,21 +84,36 @@ rules are normative for this project and are listed in the
 - Development certificates, keys, and access tokens must never be committed.
 - Binding to loopback is the default until authentication and authorization
   have been selected and tested.
+- The M4 profile implements no authorization scheme. A request containing an
+  `authorization` field receives an unsupported-feature error; TLS protects the
+  transport but does not authenticate a client.
 - Exposing the service to another machine requires an explicit bind address,
   trusted TLS material, and a documented threat review.
 
 ## Implementation and conformance
 
-M4 will compare two implementation strategies:
+The runtime embeds a Boost.Beast/Asio and OpenSSL endpoint. The comparison with
+[COVESA VISSR](https://github.com/COVESA/vissr), licence analysis, version pins,
+and rationale are recorded in
+[ADR 0007](decisions/0007-embedded-viss-endpoint.md). No COVESA implementation
+source or schema is copied into this repository.
 
-1. embed a C++ VISS endpoint in this runtime; or
-2. connect the runtime's VSS signal store to
-   [COVESA VISSR](https://github.com/COVESA/vissr).
+Protocol tests cover path reads, string values, multi-path selection,
+timestamps, subscription lifecycle, reconnect isolation, read-only Update
+errors, malformed requests, and limits. A separate client/server test creates
+ephemeral TLS material at runtime and verifies TLS, the `VISSv3` handshake,
+push events, GNSS reads, and metrics across the actual network boundary.
 
-The choice must be based on macOS/Apple Silicon support, licence obligations,
-conformance behaviour, operational complexity, and measured latency. The
-public VISS/VSS contract remains the same in either case.
+## Flow control and metrics
 
-The initial server is complete only when a separate client test verifies path
-reads, subscriptions, timestamps, units, reconnect behaviour, read-only Update
-errors, TLS, and rejection of malformed requests.
+The VSS store retains one complete frame. Each client has a bounded outbound
+queue and bounded subscription set. Protocol responses take priority over
+queued subscription events; when the event queue is full, new events are
+dropped instead of slowing the simulator. If multiple requested time periods
+elapse before service, only the current snapshot is sent.
+
+Shutdown output exposes accepted/rejected and active connection counts,
+requests, protocol errors, emitted subscription events, dropped events, and
+coalesced intervals. These counters describe server-side delivery. A consumer
+that requires durable history or end-to-end acknowledgements must persist and
+measure them outside this latest-value service.

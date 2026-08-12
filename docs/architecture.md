@@ -58,12 +58,14 @@ initial profile fixes the following choices:
 
 The specification requires Read and Update support at the transport level.
 Therefore the server must parse Update requests and return a standard VISS
-error for read-only nodes; it must not silently invent actuator semantics. A
-fully conformant implementation and its test suite are an M4 deliverable.
+error for read-only nodes; it must not silently invent actuator semantics. The
+implemented profile and its network test suite are an M4 deliverable; broader
+VISS features remain outside that documented conformance claim.
 
-Whether the endpoint embeds a native VISS implementation or connects the
-runtime to the COVESA VISS reference implementation (VISSR) remains an
-implementation decision. It does not change the public interface.
+The endpoint is embedded with Boost.Beast/Asio and OpenSSL. The decision and
+comparison with the COVESA reference implementation are recorded in
+[ADR 0007](decisions/0007-embedded-viss-endpoint.md); it does not change the
+public interface.
 
 ## Deliberate choices
 
@@ -87,7 +89,8 @@ vendor CARLA or use a CARLA/Unreal Engine source checkout as a Git submodule.
 The tested commit and installation procedure are recorded in the
 [native macOS setup](carla-setup-macos.md). The default build keeps CLI and
 documentation tests available without LibCarla;
-`CARLA_EGO_WITH_CARLA=ON` enables the native adapter.
+`CARLA_EGO_WITH_CARLA=ON` enables the native adapter and
+`CARLA_EGO_WITH_VISS=ON` enables the TLS endpoint and independent client.
 
 The previous CARLA world settings are restored before a runtime-owned ego
 vehicle is destroyed. Each tick replaces one snapshot in the VSS latest-value
