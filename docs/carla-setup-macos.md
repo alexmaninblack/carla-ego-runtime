@@ -173,10 +173,10 @@ listed in the VISS profile.
 Build and install the matching arm64 Python API wheel, then use the checked-in
 M5 runner and fixed route as described in
 [M5 operations and acceptance](m5-operations.md). The local Apple Silicon
-acceptance completed the 767.63 m route visually and across two consecutive
-restart runs. Both independent VISS probes passed in both runs, all processes
-exited cleanly, world settings were restored, and no owned vehicle, GNSS actor,
-or VISS listener remained afterward.
+acceptance completed the 767.63 m route at the measured 30 Hz cadence, visually
+and across two consecutive restart runs. Both independent VISS probes passed
+in every run, all processes exited cleanly, world settings were restored, and
+no owned vehicle, GNSS actor, or VISS listener remained afterward.
 
 ## Command-line options
 

@@ -31,6 +31,28 @@ class M5ToolTests(unittest.TestCase):
         self.assertEqual(self.config["route"]["start_spawn_point"], 40)
         self.assertEqual(self.config["route"]["destination_spawn_points"], [0, 40])
         self.assertEqual(len(self.config["carla"]["source_commit"]), 40)
+        self.assertAlmostEqual(
+            self.config["simulation"]["fixed_delta_seconds"], 1.0 / 30.0
+        )
+        self.assertEqual(self.config["runtime"]["log_every_frames"], 30)
+
+    def test_behavior_agent_pid_uses_the_physics_interval(self):
+        options = CONTROLLER.behavior_agent_options(self.config)
+        self.assertAlmostEqual(
+            options["dt"], self.config["simulation"]["fixed_delta_seconds"]
+        )
+
+    def test_tick_pacer_keeps_normal_deadline(self):
+        self.assertEqual(
+            CONTROLLER.resynchronize_tick_deadline(10.0, 10.01, 1.0 / 30.0),
+            10.0,
+        )
+
+    def test_tick_pacer_drops_a_full_period_of_lag(self):
+        self.assertEqual(
+            CONTROLLER.resynchronize_tick_deadline(10.0, 10.04, 1.0 / 30.0),
+            10.04,
+        )
 
     def test_invalid_control_source_is_rejected(self):
         invalid = json.loads(json.dumps(self.config))

@@ -9,13 +9,19 @@ drive:
 - start: recommended spawn point 40;
 - destinations: spawn point 0, then spawn point 40;
 - control source: CARLA BehaviorAgent with `normal` behavior;
-- synchronous step: 0.05 seconds, paced in real time;
+- synchronous step: 1/30 second, paced in real time;
 - expected routed distance on the pinned map: approximately 767.6 metres.
 
 The route configuration pins CARLA commit
 `385927b6ac5efaaa204b5b9853a7aaa5c5917428`. The controller rejects a different
 map, client/server version mismatch, occupied hero role, invalid indices, short
 legs, and invalid timing or networking values before driving.
+
+The same 1/30-second interval is passed into BehaviorAgent's longitudinal and
+lateral PID controllers. If one frame misses a complete period, the tick pacer
+starts a fresh period from that completion instead of issuing back-to-back
+catch-up frames. This keeps the visual cadence smooth without changing the
+deterministic simulation step.
 
 ## Build the matching Python API on Apple Silicon
 
@@ -76,20 +82,29 @@ the same runner by increasing `route.cycles`, `maximum_route_seconds`, or
 `--repeat`; the manifest makes every result comparable without changing the
 control/telemetry boundary.
 
+## Visual cadence selection
+
+The M5 physics cadence is 30 Hz. A local Apple Silicon comparison ran the same
+rendered scene for 800 frames at 20, 30, and 40 Hz. Both 20 and 30 Hz completed
+without a missed frame deadline. At 40 Hz, 92 of 800 frames exceeded the 25 ms
+budget and the worst frame took about 66 ms. The 30 Hz configuration therefore
+improves visible motion while retaining real-time headroom for the spectator
+camera, telemetry, and traffic simulation.
+
 ## Apple Silicon acceptance record
 
-The pinned native macOS baseline completed a visual route followed by two
-consecutive headless restart runs on `Town10HD_Opt`. Each restart covered the
-same 767.63 m route. The controller completed 3,260 frames in 163.01 seconds
-and 2,555 frames in 127.76 seconds; route duration varies because BehaviorAgent
-obeys live traffic lights and surrounding traffic.
+The pinned native macOS baseline completed the full route with the spectator
+camera at 30 Hz, followed by two consecutive headless restart runs on
+`Town10HD_Opt`. Every run covered the same 767.63 m route. The visual run
+completed 4,295 frames in 143.17 seconds. The restart runs completed 4,877
+frames in 162.63 seconds and 4,236 frames in 141.20 seconds; route duration
+varies because BehaviorAgent obeys live traffic lights and surrounding traffic.
 
-The telemetry runtime published 3,264 and 2,558 frame-aligned VSS updates and
-accepted 1,632 and 1,279 GNSS fixes, with zero GNSS rejections. In each run an
-independent verified-TLS client received subscription data at the start and a
-fresh frame at the end. VISS reported two accepted connections, two requests,
-two subscription events, and zero protocol errors, dropped events, or
-coalesced intervals per run.
+The telemetry runtime published 4,300 VSS updates during the visual run and
+4,881 and 4,240 frame-aligned VSS updates during the restart runs. It accepted
+1,434, 1,627, and 1,414 GNSS fixes respectively, with zero GNSS rejections. In
+each run an independent verified-TLS client received subscription data at the
+start and a fresh frame at the end, with no protocol errors or dropped events.
 
 Both controller and runtime returned exit code zero. After the second restart,
 synchronous mode was disabled, no `hero` vehicle or GNSS actor remained, and

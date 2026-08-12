@@ -161,7 +161,9 @@ the complete [native macOS setup](docs/carla-setup-macos.md).
 For the repeatable M5 route and restart/endurance acceptance workflow, see
 [M5 operations and acceptance](docs/m5-operations.md). The route runner starts
 CARLA's official Python BehaviorAgent as the tick owner and the C++ runtime as a
-non-owning telemetry observer, then records a manifest and structured log.
+non-owning telemetry observer, then records a manifest and structured log. M5
+uses a measured 30 Hz physics cadence while the standalone runtime default
+remains 20 Hz.
 
 ## Documentation
 

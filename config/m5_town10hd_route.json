@@ -12,7 +12,7 @@
     "source_commit": "385927b6ac5efaaa204b5b9853a7aaa5c5917428"
   },
   "simulation": {
-    "fixed_delta_seconds": 0.05,
+    "fixed_delta_seconds": 0.03333333333333333,
     "real_time": true,
     "maximum_route_seconds": 360,
     "startup_gate_timeout_seconds": 60,
@@ -32,7 +32,7 @@
   "runtime": {
     "viss_bind_address": "127.0.0.1",
     "viss_port": 6443,
-    "log_every_frames": 20,
+    "log_every_frames": 30,
     "chase_camera": true,
     "chase_camera_response": 10,
     "chase_camera_update_hz": 60,

@@ -170,6 +170,20 @@ def route_distance(route_trace: Iterable[Tuple[Any, Any]]) -> float:
     )
 
 
+def behavior_agent_options(config: Dict[str, Any]) -> Dict[str, float]:
+    """Keep the agent PID sampling interval aligned with the physics clock."""
+    return {"dt": float(config["simulation"]["fixed_delta_seconds"])}
+
+
+def resynchronize_tick_deadline(
+    scheduled_at: float, completed_at: float, period: float
+) -> float:
+    """Drop accumulated lag instead of issuing back-to-back catch-up ticks."""
+    if period > 0 and completed_at - scheduled_at >= period:
+        return completed_at
+    return scheduled_at
+
+
 def pace_tick(world: Any, timeout: float, next_tick_at: float, period: float) -> float:
     if period > 0:
         next_tick_at += period
@@ -177,7 +191,7 @@ def pace_tick(world: Any, timeout: float, next_tick_at: float, period: float) ->
         if remaining > 0:
             time.sleep(remaining)
     world.tick(timeout)
-    return next_tick_at
+    return resynchronize_tick_deadline(next_tick_at, time.monotonic(), period)
 
 
 def hold_synchronous_world(
@@ -298,7 +312,10 @@ def run_controller(
         world.tick(float(carla_config["timeout_seconds"]))
 
         agent = behavior_agent_class(
-            vehicle, behavior=controller_config["behavior"], map_inst=carla_map
+            vehicle,
+            behavior=controller_config["behavior"],
+            opt_dict=behavior_agent_options(config),
+            map_inst=carla_map,
         )
         destination_indices = list(route_config["destination_spawn_points"]) * int(
             route_config["cycles"]

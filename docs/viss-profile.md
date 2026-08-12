@@ -27,7 +27,7 @@ change and compatibility notes.
 | Client operations | `get`, `subscribe`, `unsubscribe` |
 | Update operation | Request syntax and standard errors supported; all initial signal nodes are read-only |
 | Signal model | VSS 6.0 plus `Vehicle.CarlaSimulation.*` overlay |
-| Nominal state cadence | 20 Hz |
+| Nominal state cadence | 30 Hz for M5; 20 Hz standalone default |
 | Nominal GNSS cadence | 10 Hz |
 
 Secure WebSocket is selected because it supports both point reads and

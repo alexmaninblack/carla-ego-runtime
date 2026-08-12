@@ -101,8 +101,9 @@ slower or faster than real time or the runtime attaches after frame zero.
 `Vehicle.CarlaSimulation.RunId`, `FrameId`, and `SimulationTime` remain the
 authoritative deterministic synchronization values. A consumer must not infer
 the CARLA frame solely from the formatted VISS timestamp. Vehicle-state values
-are updated every simulation frame (nominally 20 Hz), while GNSS values update
-at 10 Hz and retain their most recent individual data-point timestamp and
+are updated every simulation frame (30 Hz for the M5 route; the standalone
+runtime default remains 20 Hz), while GNSS values update at 10 Hz and retain
+their most recent individual data-point timestamp and
 source-frame metadata. A fix is included only when its source frame is not
 newer than the assembled vehicle frame and its simulated age is at most 0.25
 seconds.

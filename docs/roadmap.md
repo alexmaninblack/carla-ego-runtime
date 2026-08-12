@@ -82,8 +82,9 @@ Exit criterion: the ego vehicle drives a repeatable route while VISS telemetry
 is streamed continuously and the runtime can recover from clean restarts.
 
 Status: locally satisfied on the pinned Apple Silicon baseline. The acceptance
-route, independent VISS probes, resource cleanup, and two-run restart sequence
-are recorded in per-run manifests outside the repository.
+route runs at a measured 30 Hz cadence; independent VISS probes, resource
+cleanup, and a two-run restart sequence are recorded in per-run manifests
+outside the repository.
 
 ## Deferred
 
