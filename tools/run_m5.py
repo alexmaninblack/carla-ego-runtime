@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import re
 import signal
 import subprocess
 import sys
@@ -15,6 +16,36 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
+
+
+STOP_REQUESTED = threading.Event()
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def collect_dashboard_health(line: str, health: Dict[str, Any]) -> Optional[str]:
+    clean = ANSI_ESCAPE.sub("", line).strip()
+    fields = {
+        "Connection": "connection",
+        "Data health": "data_health",
+        "Simulation rate": "simulation_hz",
+        "Dashboard rate": "delivery_hz",
+        "VISS latency": "event_latency_ms",
+        "Events received": "events_received",
+    }
+    for label, key in fields.items():
+        if not clean.startswith(label):
+            continue
+        value = clean[len(label):].strip()
+        if key in {"simulation_hz", "delivery_hz", "event_latency_ms"}:
+            match = re.match(r"([0-9]+(?:\.[0-9]+)?)", value)
+            health[key] = float(match.group(1)) if match else None
+        elif key == "events_received":
+            health[key] = int(value) if value.isdigit() else None
+        else:
+            health[key] = value
+        health["captured_at"] = utc_now()
+        return key
+    return None
 
 
 def utc_now() -> str:
@@ -43,6 +74,36 @@ def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     temporary.replace(path)
+
+
+def apply_run_overrides(
+    config: Dict[str, Any], route_cycles: Optional[int],
+    maximum_route_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Create a validated effective configuration for bounded endurance runs."""
+    effective = json.loads(json.dumps(config))
+    if route_cycles is not None:
+        if route_cycles < 1 or route_cycles > 100:
+            raise ValueError("--route-cycles must be between 1 and 100")
+        base_cycles = int(effective["route"]["cycles"])
+        scale = route_cycles / base_cycles
+        effective["route"]["cycles"] = route_cycles
+        effective["simulation"]["maximum_route_seconds"] = min(
+            86400,
+            max(
+                10,
+                int(effective["simulation"]["maximum_route_seconds"] * scale),
+            ),
+        )
+    if maximum_route_seconds is not None:
+        if maximum_route_seconds < 10 or maximum_route_seconds > 86400:
+            raise ValueError(
+                "--maximum-route-seconds must be between 10 and 86400"
+            )
+        effective["simulation"]["maximum_route_seconds"] = (
+            maximum_route_seconds
+        )
+    return CONTROLLER.validate_config(effective)
 
 
 def read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -86,7 +147,8 @@ class StructuredLog:
 class CapturedProcess:
     def __init__(
         self, name: str, command: List[str], log: StructuredLog,
-        ready_text: Optional[str] = None
+        ready_text: Optional[str] = None, *, echo: bool = True,
+        record_output: bool = True, prefix_output: bool = True
     ):
         self.name = name
         self.command = command
@@ -100,6 +162,20 @@ class CapturedProcess:
         )
         self._log = log
         self._ready_text = ready_text
+        self._echo = echo
+        self._record_output = record_output
+        self._prefix_output = prefix_output
+        self._health: Dict[str, Any] = {}
+        self._health_lock = threading.Lock()
+        self._first_health: Dict[str, Any] = {}
+        self._health_samples = 0
+        self._simulation_hz_sum = 0.0
+        self._simulation_hz_min: Optional[float] = None
+        self._simulation_hz_max: Optional[float] = None
+        self._latency_sum = 0.0
+        self._latency_samples = 0
+        self._latency_min: Optional[float] = None
+        self._latency_max: Optional[float] = None
         self._thread = threading.Thread(target=self._read_output, daemon=True)
         self._thread.start()
 
@@ -109,13 +185,72 @@ class CapturedProcess:
             line = raw_line.rstrip("\r\n")
             if not line:
                 continue
-            self._log.write(self.name, line)
-            print(f"[{self.name}] {line}", flush=True)
+            if self.name == "dashboard":
+                with self._health_lock:
+                    updated_key = collect_dashboard_health(line, self._health)
+                    if (
+                        updated_key == "events_received"
+                        and self._health.get("events_received") == 1
+                        and not self._first_health
+                    ):
+                        self._first_health = dict(self._health)
+                    if updated_key == "event_latency_ms":
+                        latency = self._health["event_latency_ms"]
+                        if isinstance(latency, float):
+                            self._latency_samples += 1
+                            self._latency_sum += latency
+                            self._latency_min = (
+                                latency if self._latency_min is None
+                                else min(self._latency_min, latency)
+                            )
+                            self._latency_max = (
+                                latency if self._latency_max is None
+                                else max(self._latency_max, latency)
+                            )
+                    if updated_key == "simulation_hz":
+                        simulation_hz = self._health["simulation_hz"]
+                        if isinstance(simulation_hz, float):
+                            self._health_samples += 1
+                            self._simulation_hz_sum += simulation_hz
+                            self._simulation_hz_min = (
+                                simulation_hz if self._simulation_hz_min is None
+                                else min(self._simulation_hz_min, simulation_hz)
+                            )
+                            self._simulation_hz_max = (
+                                simulation_hz if self._simulation_hz_max is None
+                                else max(self._simulation_hz_max, simulation_hz)
+                            )
+            if self._record_output:
+                self._log.write(self.name, line)
+            if self._echo:
+                print(
+                    f"[{self.name}] {line}" if self._prefix_output else line,
+                    flush=True,
+                )
             if self._ready_text and self._ready_text in line:
                 self.ready.set()
 
     def wait(self, timeout: Optional[float] = None) -> int:
         return self.process.wait(timeout=timeout)
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        with self._health_lock:
+            snapshot = dict(self._health)
+            snapshot["first"] = dict(self._first_health)
+            snapshot["samples"] = self._health_samples
+            if self._health_samples:
+                snapshot["simulation_hz_average"] = (
+                    self._simulation_hz_sum / self._health_samples
+                )
+                snapshot["simulation_hz_minimum"] = self._simulation_hz_min
+                snapshot["simulation_hz_maximum"] = self._simulation_hz_max
+            if self._latency_min is not None:
+                snapshot["event_latency_ms_average"] = (
+                    self._latency_sum / self._latency_samples
+                )
+                snapshot["event_latency_ms_minimum"] = self._latency_min
+                snapshot["event_latency_ms_maximum"] = self._latency_max
+            return snapshot
 
     def stop(self, timeout: float = 20) -> int:
         if self.process.poll() is not None:
@@ -137,6 +272,8 @@ def wait_for_status(
 ) -> Dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if STOP_REQUESTED.is_set():
+            raise InterruptedError("operator requested stop")
         status = read_json(path)
         if status is not None and status.get("state") in states:
             return status
@@ -146,6 +283,24 @@ def wait_for_status(
             )
         time.sleep(0.05)
     raise TimeoutError(f"timed out waiting for {states} in {path}")
+
+
+def progress(stage: int, total: int, message: str) -> None:
+    print(f"[{stage}/{total}] {message}", flush=True)
+
+
+def dashboard_command(
+    client: Path, config: Dict[str, Any], certificate: Path
+) -> List[str]:
+    runtime = config["runtime"]
+    return [
+        str(client),
+        "--host", "localhost",
+        "--port", str(runtime["viss_port"]),
+        "--ca", str(certificate),
+        "--monitor",
+        "--monitor-period-ms", str(runtime["dashboard_period_ms"]),
+    ]
 
 
 def runtime_command(
@@ -258,6 +413,8 @@ def run_once(
     run_id = utc_now().replace(":", "").replace("-", "") + "-" + uuid.uuid4().hex[:8]
     run_directory = arguments.run_root / run_id
     run_directory.mkdir(parents=True, exist_ok=False)
+    effective_config_path = run_directory / "configuration.json"
+    atomic_write_json(effective_config_path, config)
     status_file = run_directory / "controller-status.json"
     gate_file = run_directory / "start.gate"
     stop_file = run_directory / "stop.gate"
@@ -268,7 +425,7 @@ def run_once(
     controller_command = [
         str(arguments.python),
         str(Path(__file__).with_name("behavior_agent_controller.py")),
-        "--config", str(arguments.config),
+        "--config", str(effective_config_path),
         "--python-api-root", str(arguments.python_api_root),
         "--status-file", str(status_file),
         "--gate-file", str(gate_file),
@@ -293,6 +450,7 @@ def run_once(
         "artifacts": {
             "events": "events.jsonl",
             "controller_status": "controller-status.json",
+            "configuration": "configuration.json",
         },
     }
     atomic_write_json(manifest_path, manifest)
@@ -300,10 +458,14 @@ def run_once(
 
     controller: Optional[CapturedProcess] = None
     telemetry: Optional[CapturedProcess] = None
+    dashboard: Optional[CapturedProcess] = None
+    dashboard_health: Dict[str, Any] = {}
     success = False
     try:
+        progress(1, 7, "Preparing the CARLA vehicle and route...")
         controller = CapturedProcess(
-            "behavior_agent", controller_command, structured_log
+            "behavior_agent", controller_command, structured_log,
+            echo=not arguments.dashboard
         )
         ready = wait_for_status(
             status_file,
@@ -317,24 +479,30 @@ def run_once(
         manifest["status"] = "controller_ready"
         atomic_write_json(manifest_path, manifest)
 
+        progress(2, 7, "Vehicle is ready; starting VSS telemetry...")
         telemetry = CapturedProcess(
-            "runtime", runtime, structured_log, "VSS frame="
+            "runtime", runtime, structured_log, "VSS frame=",
+            echo=not arguments.dashboard
         )
         runtime_deadline = time.monotonic() + float(
             config["simulation"]["startup_gate_timeout_seconds"]
         )
         while not telemetry.ready.wait(0.05):
+            if STOP_REQUESTED.is_set():
+                raise InterruptedError("operator requested stop")
             if telemetry.process.poll() is not None:
                 raise RuntimeError(
                     f"runtime exited with {telemetry.process.returncode} during startup"
                 )
             if time.monotonic() >= runtime_deadline:
                 raise TimeoutError("runtime did not publish its first VSS frame")
+        progress(3, 7, "Telemetry is live; opening the routed drive...")
         gate_file.touch()
         manifest["status"] = "driving"
         manifest["driving_started_at"] = utc_now()
         atomic_write_json(manifest_path, manifest)
         structured_log.event("startup_gate_opened")
+        progress(4, 7, "Verifying the secure VISS connection...")
         if not run_viss_probe(
             arguments.viss_client,
             config,
@@ -346,6 +514,36 @@ def run_once(
         manifest["viss_start_probe"] = "passed"
         atomic_write_json(manifest_path, manifest)
 
+        if arguments.dashboard:
+            progress(5, 7, "Opening the live telemetry dashboard...")
+            dashboard = CapturedProcess(
+                "dashboard",
+                dashboard_command(
+                    arguments.viss_client, config, arguments.certificate
+                ),
+                structured_log,
+                "Connection        CONNECTED",
+                echo=not arguments.dashboard_quiet,
+                record_output=False,
+                prefix_output=False,
+            )
+            dashboard_deadline = time.monotonic() + 20.0
+            while not dashboard.ready.wait(0.05):
+                if STOP_REQUESTED.is_set():
+                    raise InterruptedError("operator requested stop")
+                if dashboard.process.poll() is not None:
+                    raise RuntimeError(
+                        "dashboard exited before receiving live telemetry"
+                    )
+                if time.monotonic() >= dashboard_deadline:
+                    raise TimeoutError("dashboard did not receive live telemetry")
+            manifest["dashboard"] = "connected"
+            atomic_write_json(manifest_path, manifest)
+        else:
+            progress(5, 7, "VISS connection verified.")
+        progress(6, 7, "All systems are healthy.")
+        progress(7, 7, "Driving. Press Ctrl-C once for a clean stop.")
+
         route_status = wait_for_status(
             status_file,
             {"route_complete", "failed"},
@@ -354,6 +552,12 @@ def run_once(
         )
         if route_status["state"] != "route_complete":
             raise RuntimeError(f"route failed: {route_status}")
+
+        if dashboard is not None:
+            dashboard_health = dashboard.health_snapshot()
+            dashboard.stop()
+            dashboard = None
+            print("\nRoute complete; closing the dashboard...", flush=True)
 
         if not run_viss_probe(
             arguments.viss_client,
@@ -364,6 +568,8 @@ def run_once(
         ):
             raise RuntimeError("independent VISS end probe failed")
         manifest["viss_end_probe"] = "passed"
+        if dashboard_health:
+            manifest["dashboard_health"] = dashboard_health
         atomic_write_json(manifest_path, manifest)
 
         runtime_exit = telemetry.stop()
@@ -391,11 +597,14 @@ def run_once(
         atomic_write_json(manifest_path, manifest)
         structured_log.event("run_finished", success=success)
         return success
-    except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as error:
-        structured_log.event("run_failed", error=str(error))
+    except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired,
+            InterruptedError) as error:
+        stopped = isinstance(error, InterruptedError)
+        structured_log.event("run_stopped" if stopped else "run_failed",
+                             error=str(error))
         manifest.update(
             {
-                "status": "failed",
+                "status": "stopped" if stopped else "failed",
                 "finished_at": utc_now(),
                 "elapsed_seconds": time.monotonic() - started_at,
                 "error": str(error),
@@ -404,11 +613,36 @@ def run_once(
         atomic_write_json(manifest_path, manifest)
         return False
     finally:
+        dashboard_exit: Optional[int] = None
+        runtime_exit: Optional[int] = None
+        controller_exit: Optional[int] = None
+        if dashboard is not None and dashboard.process.poll() is None:
+            dashboard_health = dashboard.health_snapshot()
+            dashboard_exit = dashboard.stop()
+        elif dashboard is not None:
+            dashboard_health = dashboard.health_snapshot()
+            dashboard_exit = dashboard.process.returncode
         if telemetry is not None and telemetry.process.poll() is None:
-            telemetry.stop()
+            runtime_exit = telemetry.stop()
+        elif telemetry is not None:
+            runtime_exit = telemetry.process.returncode
         stop_file.touch(exist_ok=True)
         if controller is not None and controller.process.poll() is None:
-            controller.stop()
+            controller_exit = controller.stop()
+        elif controller is not None:
+            controller_exit = controller.process.returncode
+        if manifest.get("status") != "completed":
+            manifest.update(
+                {
+                    "finished_at": utc_now(),
+                    "dashboard_exit_code": dashboard_exit,
+                    "runtime_exit_code": runtime_exit,
+                    "controller_exit_code": controller_exit,
+                    "controller_final": read_json(status_file),
+                    "dashboard_health": dashboard_health or None,
+                }
+            )
+            atomic_write_json(manifest_path, manifest)
         structured_log.close()
         print(f"M5 run artifacts: {run_directory}", flush=True)
 
@@ -424,7 +658,20 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--private-key", type=Path)
     parser.add_argument("--run-root", type=Path, default=Path("runs"))
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--route-cycles", type=int,
+        help="override route cycles and scale the safety timeout for endurance",
+    )
+    parser.add_argument("--maximum-route-seconds", type=float)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument(
+        "--dashboard", action="store_true",
+        help="show the live VSS health dashboard during the route",
+    )
+    parser.add_argument(
+        "--dashboard-quiet", action="store_true",
+        help="collect dashboard health without rendering it to stdout",
+    )
     parser.add_argument("--validate-only", action="store_true")
     return parser.parse_args()
 
@@ -447,19 +694,28 @@ def require_live_paths(arguments: argparse.Namespace) -> None:
 
 
 def main() -> int:
+    STOP_REQUESTED.clear()
+    signal.signal(signal.SIGINT, lambda _signum, _frame: STOP_REQUESTED.set())
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: STOP_REQUESTED.set())
     arguments = parse_arguments()
     try:
         config = CONTROLLER.load_config(arguments.config)
         if arguments.validate_only:
             print(f"M5 configuration is valid: {arguments.config}")
             return 0
+        config = apply_run_overrides(
+            config, arguments.route_cycles, arguments.maximum_route_seconds
+        )
         require_live_paths(arguments)
         arguments.run_root.mkdir(parents=True, exist_ok=True)
         for sequence in range(1, arguments.repeat + 1):
             if not run_once(arguments, config, sequence):
+                if STOP_REQUESTED.is_set():
+                    print("M5 session stopped cleanly by the operator.", flush=True)
+                    return 130
                 return 2
         return 0
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, KeyboardInterrupt) as error:
         print(f"M5 orchestration error: {error}", file=sys.stderr)
         return 2
 

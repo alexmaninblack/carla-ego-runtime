@@ -135,6 +135,7 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     _require_string(runtime, "viss_bind_address")
     _require_integer(runtime, "viss_port", 1, 65535)
     _require_integer(runtime, "log_every_frames", 1, 1000000)
+    _require_integer(runtime, "dashboard_period_ms", 50, 60000)
     if not isinstance(runtime.get("chase_camera"), bool):
         raise ConfigurationError("runtime.chase_camera must be a boolean")
     _require_number(runtime, "chase_camera_response", 0.1, 100)
@@ -271,6 +272,7 @@ def run_controller(
     vehicle = None
     settings_changed = False
     completed = False
+    stopped = False
     try:
         existing = [
             actor
@@ -454,6 +456,10 @@ def run_controller(
                 shutdown_stop.set()
                 shutdown_thread.join()
         return 0
+    except InterruptedError:
+        stopped = True
+        emit("controller_stopped", reason="operator_request")
+        return 0
     finally:
         if vehicle is not None:
             try:
@@ -470,7 +476,9 @@ def run_controller(
                 emit("world_settings_restore_failed", error=str(error))
         status.update(
             {
-                "state": "completed" if completed else "failed",
+                "state": (
+                    "completed" if completed else "stopped" if stopped else "failed"
+                ),
                 "updated_at": utc_now(),
             }
         )
@@ -506,7 +514,7 @@ def main() -> int:
             arguments.gate_file,
             arguments.stop_file,
         )
-    except (ConfigurationError, RuntimeError, TimeoutError, InterruptedError) as error:
+    except (ConfigurationError, RuntimeError, TimeoutError) as error:
         emit("controller_failed", error=str(error))
         return 2
 

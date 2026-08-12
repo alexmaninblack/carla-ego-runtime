@@ -59,6 +59,35 @@ Use `--repeat 2 --headless` for a restart test. `--headless` disables only the
 spectator camera and exposure command; Unreal rendering remains controlled by
 the simulator.
 
+## Integrated M5.1 operator launcher
+
+`tools/launch_m5.py` provides one operator-facing session. If CARLA is already
+available it is reused; otherwise the launcher may start a configured Unreal
+Editor command. Startup progress distinguishes simulator loading, CARLA
+readiness, vehicle preparation, live VSS telemetry, independent TLS
+verification, and dashboard readiness. Local Unreal, certificate, and build
+paths are passed on the command line and remain outside the repository.
+
+The launcher opens the routed drive and VSS health dashboard together. One
+Ctrl-C requests an orderly stop. The launcher stops only processes that it
+started, while the existing M5 gates guarantee that the telemetry runtime
+removes its GNSS sensor before the controller removes the vehicle and restores
+the world settings. A per-run-root lock prevents two local launchers from
+owning the same session.
+
+The dashboard reports:
+
+- verified TLS/VISS connection state;
+- live/stale data health;
+- simulation cadence derived from VSS frame and simulation-time deltas;
+- dashboard event delivery cadence;
+- local event latency derived from the VISS event timestamp;
+- the cumulative number of received subscription events.
+
+These are operator diagnostics, not additional VSS signals. The measured
+delivery rate follows `runtime.dashboard_period_ms` and is intentionally lower
+than the 30 Hz simulation cadence.
+
 ## Artifacts and success criteria
 
 Each run directory contains:
@@ -78,9 +107,11 @@ are redacted from the manifest. The local run directory is ignored by Git.
 ## Endurance
 
 The first M5 acceptance route is a bounded endurance unit. Longer tests reuse
-the same runner by increasing `route.cycles`, `maximum_route_seconds`, or
-`--repeat`; the manifest makes every result comparable without changing the
-control/telemetry boundary.
+the same runner with `--route-cycles N` or `--repeat`; the cycle override scales
+the safety timeout, and the effective configuration is stored beside the
+manifest. The manifest makes every result comparable without changing the
+control/telemetry boundary. Fourteen cycles are used for the M5.1 30-minute
+Apple Silicon endurance acceptance.
 
 ## Visual cadence selection
 
@@ -110,3 +141,25 @@ Both controller and runtime returned exit code zero. After the second restart,
 synchronous mode was disabled, no `hero` vehicle or GNSS actor remained, and
 no process was listening on the VISS port. The detailed manifests and event
 logs remain local and are intentionally excluded from the public repository.
+
+## M5.1 Apple Silicon acceptance record
+
+The integrated launcher was accepted through a visual desktop launch, an
+operator-interrupt cleanup run, two consecutive full-route restarts, and a
+14-cycle endurance drive. The endurance drive covered 10,746.82 m over 28 route
+legs and ran for 1,920.84 seconds (32.01 minutes). It published 57,520
+frame-aligned VSS state updates, accepted 19,195 GNSS fixes with zero
+rejections, and delivered 7,679 dashboard subscription events with zero
+protocol errors, dropped events, or coalesced intervals.
+
+The two final restart runs covered 767.63 m each in 141.55 and 141.03 seconds.
+Dashboard health reported `CONNECTED` and `LIVE` throughout both runs. The
+measured simulation cadence was exactly 30.0 Hz in every collected sample;
+dashboard delivery was 4.0 events/s. Average local VISS event latency was 0.70
+and 0.67 ms, and the worst observed latency was 1.9 ms.
+
+Both restart runs and the endurance run returned zero from the controller and
+telemetry runtime, passed independent TLS/VISS start and end probes, restored
+asynchronous world settings, removed the owned vehicle and GNSS sensor, and
+left no VISS listener. The desktop launcher reused an already-open Unreal
+instance and did not close it after one operator stop.

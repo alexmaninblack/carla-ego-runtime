@@ -86,9 +86,44 @@ route runs at a measured 30 Hz cadence; independent VISS probes, resource
 cleanup, and a two-run restart sequence are recorded in per-run manifests
 outside the repository.
 
+## M5.1 — Operator experience and health visibility
+
+- [x] Provide one launcher for the simulator, routed drive, telemetry runtime,
+  and VSS dashboard.
+- [x] Show explicit startup stages while Unreal and CARLA are becoming ready.
+- [x] Stop only launcher-owned processes and restore CARLA world state after a
+  normal exit, failure, or operator interrupt.
+- [x] Display VISS connection state, measured simulation cadence, dashboard
+  delivery cadence, and local VISS event latency.
+- [x] Validate the integrated launcher visually and through restart and
+  30-minute endurance acceptance runs.
+
+Exit criterion: one operator action reaches a visibly healthy driving dashboard
+and one stop action cleans up the complete launcher-owned session. Health
+indicators remain stable during the bounded endurance run, with no VISS loss or
+owned CARLA actors left behind.
+
+Status: satisfied on the pinned Apple Silicon baseline. The integrated desktop
+entry point, operator interrupt, two-run restart, and 32-minute endurance
+sequence all completed with clean resource restoration.
+
+## M6 — External vehicle control
+
+- [ ] Define a versioned control contract for throttle, brake, and steering.
+- [ ] Preserve BehaviorAgent as a selectable fallback control source.
+- [ ] Add controller ownership, command sequence, and heartbeat semantics.
+- [ ] Apply a safe stop when commands expire or the external controller
+  disconnects.
+- [ ] Demonstrate an independent client taking and releasing vehicle control
+  while VISS telemetry remains continuous.
+
+Exit criterion: an authenticated local client can explicitly acquire control,
+drive the ego vehicle, and release it; stale or lost commands always produce a
+bounded safe stop without breaking telemetry or CARLA cleanup.
+
 ## Deferred
 
 Cameras, LiDAR, radar, ultrasonic modelling, packaged macOS distribution, and
-external autonomous control are separate future milestones. ROS 2 may be added
+packaged macOS distribution are separate future milestones. ROS 2 may be added
 as an optional adapter only when a concrete ROS-based consumer or tool is in
 scope; it is not part of the core CARLA-to-VISS path.

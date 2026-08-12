@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ CONTROLLER = load_module(
     "m5_controller_tested", REPOSITORY / "tools" / "behavior_agent_controller.py"
 )
 RUNNER = load_module("m5_runner_tested", REPOSITORY / "tools" / "run_m5.py")
+LAUNCHER = load_module("m5_launcher_tested", REPOSITORY / "tools" / "launch_m5.py")
 
 
 class M5ToolTests(unittest.TestCase):
@@ -35,6 +37,7 @@ class M5ToolTests(unittest.TestCase):
             self.config["simulation"]["fixed_delta_seconds"], 1.0 / 30.0
         )
         self.assertEqual(self.config["runtime"]["log_every_frames"], 30)
+        self.assertEqual(self.config["runtime"]["dashboard_period_ms"], 250)
 
     def test_behavior_agent_pid_uses_the_physics_interval(self):
         options = CONTROLLER.behavior_agent_options(self.config)
@@ -73,6 +76,10 @@ class M5ToolTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())["state"], "ready")
             self.assertFalse(path.with_suffix(".json.tmp").exists())
 
+    def test_controller_stop_state_is_distinct_from_failure(self):
+        source = (REPOSITORY / "tools" / "behavior_agent_controller.py").read_text()
+        self.assertIn('"completed" if completed else "stopped" if stopped else "failed"', source)
+
     def test_runtime_manifest_redacts_tls_paths(self):
         command = RUNNER.runtime_command(
             Path("runtime"), self.config, Path("secret-cert.pem"), Path("secret-key.pem"), True
@@ -92,6 +99,68 @@ class M5ToolTests(unittest.TestCase):
         self.assertIn("--no-spawn", command)
         self.assertIn("--observe-ticks", command)
         self.assertNotIn("--real-time", command)
+
+    def test_dashboard_uses_configured_health_period(self):
+        command = RUNNER.dashboard_command(
+            Path("client"), self.config, Path("certificate.pem")
+        )
+        self.assertIn("--monitor", command)
+        period_index = command.index("--monitor-period-ms")
+        self.assertEqual(command[period_index + 1], "250")
+
+    def test_dashboard_health_lines_become_manifest_metrics(self):
+        health = {}
+        RUNNER.collect_dashboard_health("Simulation rate   30.0 Hz", health)
+        RUNNER.collect_dashboard_health("Dashboard rate    4.0 events/s", health)
+        RUNNER.collect_dashboard_health("VISS latency      0.8 ms (local)", health)
+        RUNNER.collect_dashboard_health("Events received   42", health)
+        self.assertEqual(health["simulation_hz"], 30.0)
+        self.assertEqual(health["delivery_hz"], 4.0)
+        self.assertEqual(health["event_latency_ms"], 0.8)
+        self.assertEqual(health["events_received"], 42)
+
+    def test_dashboard_health_strips_terminal_escape_sequences(self):
+        health = {}
+        RUNNER.collect_dashboard_health(
+            "\x1b[2J\x1b[HConnection        CONNECTED", health
+        )
+        self.assertEqual(health["connection"], "CONNECTED")
+
+    def test_launcher_starts_integrated_dashboard_session(self):
+        arguments = type("Arguments", (), {})()
+        arguments.python = Path("python")
+        arguments.config = Path("config.json")
+        arguments.runtime = Path("runtime")
+        arguments.viss_client = Path("client")
+        arguments.python_api_root = Path("python-api")
+        arguments.certificate = Path("certificate.pem")
+        arguments.private_key = Path("private-key.pem")
+        arguments.run_root = Path("runs")
+        arguments.route_cycles = None
+        arguments.maximum_route_seconds = None
+        arguments.dashboard_quiet = False
+        command = LAUNCHER.orchestrator_command(arguments)
+        self.assertIn("--dashboard", command)
+        self.assertIn("run_m5.py", " ".join(command))
+
+    def test_endurance_override_scales_route_timeout(self):
+        effective = RUNNER.apply_run_overrides(self.config, 14)
+        self.assertEqual(effective["route"]["cycles"], 14)
+        self.assertEqual(effective["simulation"]["maximum_route_seconds"], 5040)
+
+    def test_launcher_lock_replaces_stale_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.lock"
+            path.write_text("999999999\n")
+            lock = LAUNCHER.SessionLock(path)
+            lock.acquire()
+            self.assertEqual(int(path.read_text()), os.getpid())
+            lock.release()
+            self.assertFalse(path.exists())
+
+    def test_launcher_isolates_owned_process_signal_groups(self):
+        source = (REPOSITORY / "tools" / "launch_m5.py").read_text()
+        self.assertGreaterEqual(source.count("start_new_session=True"), 2)
 
     def test_live_runner_requires_independent_viss_client(self):
         arguments = type("Arguments", (), {})()

@@ -9,9 +9,11 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -172,6 +174,16 @@ std::string BuildMonitorRequest(std::uint32_t period_ms) {
 
 using SignalValues = std::map<std::string, std::string>;
 
+struct MonitorHealth {
+  std::optional<double> simulation_hz;
+  std::optional<double> delivery_hz;
+  std::optional<double> event_latency_ms;
+  std::optional<double> previous_frame;
+  std::optional<double> previous_simulation_time;
+  std::optional<std::chrono::steady_clock::time_point> previous_received_at;
+  std::size_t event_count = 0;
+};
+
 void CollectDataPoint(const json::object &object, SignalValues &signals) {
   const auto *path = object.if_contains("path");
   const auto *dp = object.if_contains("dp");
@@ -231,6 +243,96 @@ std::string NumberText(const SignalValues &signals, std::string_view path,
   return output.str();
 }
 
+std::string MetricText(const std::optional<double> &value, int precision,
+                       std::string_view suffix) {
+  if (!value.has_value() || !std::isfinite(*value)) {
+    return "--";
+  }
+  std::ostringstream output;
+  output << std::fixed << std::setprecision(precision) << *value << suffix;
+  return output.str();
+}
+
+std::optional<std::chrono::system_clock::time_point>
+ParseIso8601Utc(std::string_view text) {
+  if (text.size() != 24 || text[4] != '-' || text[7] != '-' ||
+      text[10] != 'T' || text[13] != ':' || text[16] != ':' ||
+      text[19] != '.' || text[23] != 'Z') {
+    return std::nullopt;
+  }
+  std::tm utc{};
+  std::istringstream input{std::string(text.substr(0, 19))};
+  input >> std::get_time(&utc, "%Y-%m-%dT%H:%M:%S");
+  if (input.fail()) {
+    return std::nullopt;
+  }
+  unsigned milliseconds = 0;
+  const auto millisecond_text = text.substr(20, 3);
+  const auto result = std::from_chars(millisecond_text.data(),
+                                      millisecond_text.data() + 3,
+                                      milliseconds);
+  if (result.ec != std::errc{} || result.ptr != millisecond_text.data() + 3) {
+    return std::nullopt;
+  }
+#if defined(_WIN32)
+  const auto seconds = _mkgmtime(&utc);
+#else
+  const auto seconds = timegm(&utc);
+#endif
+  if (seconds < 0) {
+    return std::nullopt;
+  }
+  return std::chrono::system_clock::from_time_t(seconds) +
+         std::chrono::milliseconds(milliseconds);
+}
+
+void SmoothMetric(std::optional<double> &metric, double sample) {
+  constexpr double response = 0.25;
+  if (!std::isfinite(sample)) {
+    return;
+  }
+  metric = metric.has_value() ? *metric + response * (sample - *metric)
+                              : sample;
+}
+
+void UpdateHealth(const SignalValues &signals, std::string_view event_timestamp,
+                  MonitorHealth &health) {
+  const auto received_at = std::chrono::steady_clock::now();
+  const auto frame = Number(signals, "Vehicle.CarlaSimulation.FrameId");
+  const auto simulation_time =
+      Number(signals, "Vehicle.CarlaSimulation.SimulationTime");
+  if (frame.has_value() && simulation_time.has_value() &&
+      health.previous_frame.has_value() &&
+      health.previous_simulation_time.has_value()) {
+    const double frame_delta = *frame - *health.previous_frame;
+    const double simulation_delta =
+        *simulation_time - *health.previous_simulation_time;
+    if (frame_delta > 0.0 && simulation_delta > 0.0) {
+      SmoothMetric(health.simulation_hz, frame_delta / simulation_delta);
+    }
+  }
+  if (health.previous_received_at.has_value()) {
+    const double seconds =
+        std::chrono::duration<double>(received_at - *health.previous_received_at)
+            .count();
+    if (seconds > 0.0) {
+      SmoothMetric(health.delivery_hz, 1.0 / seconds);
+    }
+  }
+  if (const auto sent_at = ParseIso8601Utc(event_timestamp);
+      sent_at.has_value()) {
+    SmoothMetric(
+        health.event_latency_ms,
+        std::max(0.0, std::chrono::duration<double, std::milli>(
+                          std::chrono::system_clock::now() - *sent_at)
+                          .count()));
+  }
+  health.previous_frame = frame;
+  health.previous_simulation_time = simulation_time;
+  health.previous_received_at = received_at;
+  ++health.event_count;
+}
+
 std::string Bar(const SignalValues &signals, std::string_view path) {
   constexpr int width = 20;
   const double percent =
@@ -241,13 +343,27 @@ std::string Bar(const SignalValues &signals, std::string_view path) {
 }
 
 void RenderDashboard(const Options &options, const SignalValues &signals,
-                     std::string_view updated_at) {
+                     std::string_view updated_at,
+                     const MonitorHealth &health) {
+  const double healthy_latency_ms =
+      std::max(1000.0, static_cast<double>(options.monitor_period_ms) * 4.0);
+  const bool live = health.event_latency_ms.has_value() &&
+                    *health.event_latency_ms <= healthy_latency_ms;
   std::cout
       << "\033[2J\033[H"
       << "CARLA / VSS LIVE TELEMETRY\n"
       << "===========================\n"
       << "wss://" << options.host << ':' << options.port
-      << "   VISSv3   TLS verified\n\n"
+      << "   VISSv3   TLS verified\n"
+      << "Connection        CONNECTED\n"
+      << "Data health       " << (live ? "LIVE" : "WAITING") << '\n'
+      << "Simulation rate   "
+      << MetricText(health.simulation_hz, 1, " Hz") << '\n'
+      << "Dashboard rate    "
+      << MetricText(health.delivery_hz, 1, " events/s") << '\n'
+      << "VISS latency      "
+      << MetricText(health.event_latency_ms, 1, " ms") << " (local)\n"
+      << "Events received   " << health.event_count << "\n\n"
       << "Frame             "
       << Value(signals, "Vehicle.CarlaSimulation.FrameId") << '\n'
       << "Simulation time   "
@@ -296,6 +412,7 @@ void RunMonitor(SecureWebSocket &client, const Options &options) {
   }
 
   SignalValues signals;
+  MonitorHealth health;
   while (true) {
     const auto event = json::parse(ReadMessage(client));
     if (!event.is_object()) {
@@ -311,7 +428,8 @@ void RunMonitor(SecureWebSocket &client, const Options &options) {
         timestamp != nullptr && timestamp->is_string()) {
       updated_at = AsString(timestamp->as_string());
     }
-    RenderDashboard(options, signals, updated_at);
+    UpdateHealth(signals, updated_at, health);
+    RenderDashboard(options, signals, updated_at, health);
   }
 }
 

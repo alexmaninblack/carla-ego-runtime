@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   carla_ego_runtime
-  VERSION 0.6.1
+  VERSION 0.7.0
   DESCRIPTION "Native runtime and telemetry gateway for a CARLA ego vehicle"
   LANGUAGES CXX
 )

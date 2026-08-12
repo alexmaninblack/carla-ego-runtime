@@ -165,6 +165,12 @@ non-owning telemetry observer, then records a manifest and structured log. M5
 uses a measured 30 Hz physics cadence while the standalone runtime default
 remains 20 Hz.
 
+M5.1 adds an integrated operator launcher. It waits visibly for CARLA, starts
+the route, VSS endpoint, and health dashboard as one session, and performs
+owned-process cleanup after route completion, failure, or Ctrl-C. Local machine
+paths belong in the desktop wrapper or launch command and are not committed to
+this public repository.
+
 ## Documentation
 
 - [Native CARLA setup on macOS](docs/carla-setup-macos.md)

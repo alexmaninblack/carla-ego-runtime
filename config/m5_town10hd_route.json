@@ -33,6 +33,7 @@
     "viss_bind_address": "127.0.0.1",
     "viss_port": 6443,
     "log_every_frames": 30,
+    "dashboard_period_ms": 250,
     "chase_camera": true,
     "chase_camera_response": 10,
     "chase_camera_update_hz": 60,
