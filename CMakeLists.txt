@@ -223,6 +223,12 @@ if(BUILD_TESTING)
         "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_1_tools_test.py"
     )
+    add_test(
+      NAME product_language
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/product_language_test.py"
+    )
     if(APPLE)
       add_test(
         NAME keyboard_control_native

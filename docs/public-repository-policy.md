@@ -37,6 +37,13 @@ reviewing the resulting licence obligations.
 The project-owned `Vehicle.CarlaSimulation.*` overlay must remain clearly
 identified as an extension rather than an official part of COVESA VSS.
 
+## Product language
+
+English is the only product language. User-interface labels, terminal output,
+errors, logs, configuration examples, source comments, tests, and documentation
+must not depend on the language used in development conversations. Automated
+tests reject Cyrillic text in repository-owned product files.
+
 ## Before every public push
 
 1. Review the complete staged file list and diff.
