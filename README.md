@@ -181,6 +181,13 @@ channel with a fresh per-run token, and its fail-safe action is zero throttle,
 full brake, and centred steering. See
 [M6 external-control operations and acceptance](docs/m6-operations.md).
 
+M6.1 adds a macOS-native focused-window keyboard client over that same
+control contract. Arrow keys control throttle, brake, and steering; loss of
+focus, Space, window close, or client loss selects safe stop. A separate cold-
+start launcher keeps the live VSS dashboard visible in Terminal and records a
+machine-readable startup timeline. See
+[M6.1 keyboard driving](docs/m6-1-keyboard-driving.md).
+
 ## Documentation
 
 - [Native CARLA setup on macOS](docs/carla-setup-macos.md)
@@ -192,6 +199,7 @@ full brake, and centred steering. See
 - [M5 operations and acceptance](docs/m5-operations.md)
 - [External-control contract](docs/external-control-contract.md)
 - [M6 external-control operations and acceptance](docs/m6-operations.md)
+- [M6.1 keyboard driving](docs/m6-1-keyboard-driving.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies and licences](THIRD_PARTY.md)

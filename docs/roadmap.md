@@ -127,6 +127,26 @@ released ownership, and then verified disconnect safe stop with continuous
 30 Hz telemetry. A bounded visual run, two clean restarts, motion measurement,
 and actor/socket cleanup are recorded in private per-run artifacts.
 
+## M6.1 — Keyboard driving and observable startup
+
+- [x] Add a focused-window native macOS keyboard client over the M6 contract.
+- [x] Map Up to throttle, Down to brake, and Left/Right to steering with bounded
+  command ramps and brake priority.
+- [x] Select safe stop on focus loss, Space, window close, client loss, or
+  command timeout; require Enter to arm or resume.
+- [x] Keep a live VSS dashboard visible in the launch Terminal.
+- [x] Add a separate cold/warm launcher and machine-readable startup timeline.
+- [x] Complete the operator-observed cold-start drive and cleanup acceptance.
+
+Exit criterion: one desktop action cold-starts CARLA, shows measured startup
+stages, opens a live telemetry dashboard and keyboard-control panel, permits a
+manual drive, and cleans up all owned resources after the operator exits.
+
+Status: satisfied on the pinned Apple Silicon baseline. The operator completed
+the desktop cold start, manual keyboard drive, live-dashboard review, safe-stop
+checks, and clean exit. The final private run manifest reports completion; the
+controller is stopped with no owner, and its socket and token are removed.
+
 ## Deferred
 
 Cameras, LiDAR, radar, ultrasonic modelling, and packaged macOS distribution

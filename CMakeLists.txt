@@ -217,6 +217,23 @@ if(BUILD_TESTING)
         "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/external_control_protocol_test.py"
     )
+    add_test(
+      NAME m6_1_tools
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_1_tools_test.py"
+    )
+    if(APPLE)
+      add_test(
+        NAME keyboard_control_native
+        COMMAND ${CMAKE_COMMAND} -E env
+          CLANG_MODULE_CACHE_PATH=${CMAKE_BINARY_DIR}/swift-module-cache/clang
+          SWIFT_MODULECACHE_PATH=${CMAKE_BINARY_DIR}/swift-module-cache/swift
+          xcrun swiftc -typecheck
+          "${CMAKE_CURRENT_SOURCE_DIR}/tools/KeyboardControl.swift"
+          -framework AppKit
+      )
+    endif()
   endif()
   set_tests_properties(
     runtime_reports_version
