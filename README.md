@@ -6,10 +6,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> M2 basic vehicle-state collection is implemented. The runtime owns a
+> M3 vehicle-state and GNSS collection is implemented. The runtime owns a
 > synchronous 20 Hz simulation clock by default, publishes exactly one
 > timestamped VSS snapshot per CARLA frame, and retains only the latest
-> snapshot. GNSS and the network-facing VISS server remain later milestones.
+> snapshot. The network-facing VISS server remains the next milestone.
 
 ## Current capabilities
 
@@ -25,6 +25,8 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 - optional wall-clock pacing for smooth real-time visualization;
 - optional synchronous Traffic Manager autopilot and chase-camera demo mode;
 - frame-aligned speed, acceleration, pedal, steering, gear, and RPM sampling;
+- an attached 10 Hz GNSS sensor with source-frame ordering, freshness checks,
+  and independent data-point timestamps;
 - transport-independent normalization and VSS 6.0 projection;
 - a bounded latest-value signal store and project-owned simulation overlay;
 - a dependency-free build mode for CLI tests and documentation CI;
@@ -93,7 +95,8 @@ This collects one simulated second at the default fixed step of 0.05 seconds.
 Use `--observe-ticks` only when another client is the designated synchronous
 tick owner.
 
-For a smooth visual M2 demonstration with one physics-driven ego vehicle, run:
+For a smooth visual M3 demonstration with one physics-driven ego vehicle and
+GNSS, run:
 
 ```sh
 ./build-carla/carla-ego-runtime \
@@ -102,6 +105,8 @@ For a smooth visual M2 demonstration with one physics-driven ego vehicle, run:
   --real-time \
   --autopilot \
   --chase-camera \
+  --gnss-sensor-tick-seconds 0.1 \
+  --gnss-max-age-seconds 0.25 \
   --log-every-frames 20
 ```
 
@@ -110,7 +115,7 @@ time. The vehicle is controlled by CARLA's Traffic Manager rather than by
 teleporting it between road positions.
 
 The CARLA server must already be listening on the configured RPC address. See
-the complete [native macOS setup and M2 runbook](docs/carla-setup-macos.md).
+the complete [native macOS setup and M3 runbook](docs/carla-setup-macos.md).
 
 ## Documentation
 

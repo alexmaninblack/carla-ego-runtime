@@ -118,6 +118,20 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
         throw std::invalid_argument(
             "--log-every-frames must be greater than zero");
       }
+    } else if (argument == "--gnss-sensor-tick-seconds") {
+      result.options.gnss_sensor_tick_seconds = ParsePositiveDouble(
+          RequireValue(arguments, index), "--gnss-sensor-tick-seconds");
+      if (result.options.gnss_sensor_tick_seconds > 10.0) {
+        throw std::invalid_argument(
+            "--gnss-sensor-tick-seconds must be no greater than 10.0");
+      }
+    } else if (argument == "--gnss-max-age-seconds") {
+      result.options.gnss_max_age_seconds = ParsePositiveDouble(
+          RequireValue(arguments, index), "--gnss-max-age-seconds");
+      if (result.options.gnss_max_age_seconds > 60.0) {
+        throw std::invalid_argument(
+            "--gnss-max-age-seconds must be no greater than 60.0");
+      }
     } else if (argument == "--observe-ticks") {
       result.options.tick_owner = false;
     } else if (argument == "--real-time") {
@@ -169,6 +183,9 @@ Options:
       --real-time               Pace owned ticks against the wall clock
       --autopilot               Drive the ego vehicle with Traffic Manager
       --chase-camera            Follow the ego vehicle with the spectator
+      --gnss-sensor-tick-seconds S
+                                GNSS measurement period (default: 0.1)
+      --gnss-max-age-seconds S  Omit older retained GNSS fixes (default: 0.25)
       --log-every-frames N      Print one sample summary every N frames
                                 (default: 1)
       --observe-ticks           Do not own or advance the simulation clock;

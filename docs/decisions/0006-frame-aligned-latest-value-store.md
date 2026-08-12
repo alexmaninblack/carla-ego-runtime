@@ -13,8 +13,11 @@ tick boundary could mix adjacent frames.
 
 The runtime is the single designated synchronous tick owner by default. It
 sets a 0.05 second fixed delta, advances one frame, reads the matching actor
-snapshot and vehicle telemetry, and publishes one VSS snapshot. All data points
-share one anchored UTC timestamp, frame ID, and simulation time.
+snapshot and vehicle telemetry, and publishes one VSS snapshot. Vehicle-state
+points share the state frame's anchored UTC timestamp, frame ID, and simulation
+time. Slower sensors such as the 10 Hz GNSS collector retain their own source
+timestamp and expose source frame/time metadata when merged into a later state
+snapshot.
 
 The in-process store retains only the newest complete snapshot. It accepts only
 strictly increasing frame IDs and rejects duplicates or older frames. Observer

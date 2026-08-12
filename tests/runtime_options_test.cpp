@@ -39,6 +39,10 @@ int main() {
   Check(defaults.options.role_name == "hero", "default role");
   Check(defaults.options.max_frames == 1, "one telemetry frame by default");
   Check(defaults.options.fixed_delta_seconds == 0.05, "default fixed delta");
+  Check(defaults.options.gnss_sensor_tick_seconds == 0.1,
+        "default GNSS measurement period");
+  Check(defaults.options.gnss_max_age_seconds == 0.25,
+        "default GNSS freshness threshold");
   Check(defaults.options.log_every_frames == 1, "log every frame by default");
   Check(defaults.options.tick_owner, "tick ownership enabled by default");
   Check(defaults.options.spawn_if_missing, "spawning enabled by default");
@@ -52,7 +56,9 @@ int main() {
       {"--host", "carla.local", "--port", "2100", "--timeout-ms", "5000",
        "--role-name", "ego", "--blueprint", "vehicle.tesla.model3",
        "--spawn-point-index", "7", "--run-seconds", "15", "--max-frames",
-       "42", "--fixed-delta-seconds", "0.1", "--log-every-frames", "10",
+       "42", "--fixed-delta-seconds", "0.1",
+       "--gnss-sensor-tick-seconds", "0.2", "--gnss-max-age-seconds", "0.6",
+       "--log-every-frames", "10",
        "--observe-ticks", "--real-time", "--autopilot", "--chase-camera",
        "--no-spawn", "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
@@ -65,6 +71,10 @@ int main() {
   Check(custom.options.run_seconds == 15, "custom run duration");
   Check(custom.options.max_frames == 42, "custom frame limit");
   Check(custom.options.fixed_delta_seconds == 0.1, "custom fixed delta");
+  Check(custom.options.gnss_sensor_tick_seconds == 0.2,
+        "custom GNSS measurement period");
+  Check(custom.options.gnss_max_age_seconds == 0.6,
+        "custom GNSS freshness threshold");
   Check(custom.options.log_every_frames == 10, "custom log interval");
   Check(!custom.options.tick_owner, "observer mode");
   Check(!custom.options.spawn_if_missing, "spawning disabled");
@@ -94,6 +104,10 @@ int main() {
               "oversized fixed delta rejected");
   CheckThrows([] { ParseCommandLine({"--log-every-frames", "0"}); },
               "zero log interval rejected");
+  CheckThrows([] { ParseCommandLine({"--gnss-sensor-tick-seconds", "0"}); },
+              "zero GNSS measurement period rejected");
+  CheckThrows([] { ParseCommandLine({"--gnss-max-age-seconds", "61"}); },
+              "oversized GNSS freshness threshold rejected");
 
   if (failures == 0) {
     std::cout << "runtime option tests passed\n";

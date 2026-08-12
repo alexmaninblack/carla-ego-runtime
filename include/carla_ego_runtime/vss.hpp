@@ -1,6 +1,7 @@
 #pragma once
 
 #include "carla_ego_runtime/vehicle_state.hpp"
+#include "carla_ego_runtime/gnss.hpp"
 
 #include <cstdint>
 #include <mutex>
@@ -29,7 +30,9 @@ struct VssSnapshot {
 
 std::string FormatIso8601Utc(
     std::chrono::system_clock::time_point timestamp_utc);
-VssSnapshot ProjectToVss(const NormalizedVehicleState &state);
+VssSnapshot ProjectToVss(
+    const NormalizedVehicleState &state,
+    const std::optional<NormalizedGnssFix> &gnss_fix = std::nullopt);
 
 // A bounded, thread-safe last-value store. Publishing a duplicate or older
 // frame is rejected, so every accepted frame contributes exactly one update.

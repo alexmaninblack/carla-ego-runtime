@@ -18,6 +18,12 @@ void Add(VssSnapshot &snapshot, std::string path, VssValue value) {
       {std::move(path), std::move(value), snapshot.timestamp});
 }
 
+void AddAt(VssSnapshot &snapshot, std::string path, VssValue value,
+           std::chrono::system_clock::time_point timestamp_utc) {
+  snapshot.data_points.push_back({std::move(path), std::move(value),
+                                  FormatIso8601Utc(timestamp_utc)});
+}
+
 }  // namespace
 
 std::string FormatIso8601Utc(
@@ -46,7 +52,9 @@ std::string FormatIso8601Utc(
   return output.str();
 }
 
-VssSnapshot ProjectToVss(const NormalizedVehicleState &state) {
+VssSnapshot ProjectToVss(
+    const NormalizedVehicleState &state,
+    const std::optional<NormalizedGnssFix> &gnss_fix) {
   VssSnapshot snapshot;
   snapshot.frame_id = state.frame_id;
   snapshot.simulation_time_s = state.simulation_time_s;
@@ -81,6 +89,18 @@ VssSnapshot ProjectToVss(const NormalizedVehicleState &state) {
   Add(snapshot, "Vehicle.CarlaSimulation.FrameId", state.frame_id);
   Add(snapshot, "Vehicle.CarlaSimulation.SimulationTime",
       state.simulation_time_s);
+  if (gnss_fix.has_value()) {
+    AddAt(snapshot, "Vehicle.CurrentLocation.Latitude",
+          gnss_fix->latitude_deg, gnss_fix->timestamp_utc);
+    AddAt(snapshot, "Vehicle.CurrentLocation.Longitude",
+          gnss_fix->longitude_deg, gnss_fix->timestamp_utc);
+    AddAt(snapshot, "Vehicle.CurrentLocation.Altitude", gnss_fix->altitude_m,
+          gnss_fix->timestamp_utc);
+    AddAt(snapshot, "Vehicle.CarlaSimulation.GnssFrameId",
+          gnss_fix->source_frame_id, gnss_fix->timestamp_utc);
+    AddAt(snapshot, "Vehicle.CarlaSimulation.GnssSimulationTime",
+          gnss_fix->source_simulation_time_s, gnss_fix->timestamp_utc);
+  }
   return snapshot;
 }
 

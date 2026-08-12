@@ -48,7 +48,16 @@ int main() {
   state.engine_rpm = 1200.0;
   state.equivalent_front_axle_angle_iso_deg = 7.5;
 
-  const auto snapshot = ProjectToVss(state);
+  NormalizedGnssFix gnss;
+  gnss.source_frame_id = 98;
+  gnss.source_simulation_time_s = 4.9;
+  gnss.timestamp_utc = std::chrono::system_clock::time_point{} +
+                       std::chrono::milliseconds(1134);
+  gnss.latitude_deg = 52.520008;
+  gnss.longitude_deg = 13.404954;
+  gnss.altitude_m = 37.25;
+
+  const auto snapshot = ProjectToVss(state, gnss);
   Check(snapshot.timestamp == "1970-01-01T00:00:01.234Z",
         "UTC timestamp has millisecond precision and trailing Z");
   Check(std::get<double>(Find(snapshot, "Vehicle.Speed")->value) == 36.0,
@@ -66,10 +75,19 @@ int main() {
         "gear projected as signed integer");
   Check(Find(snapshot, "Vehicle.Chassis.Axle.Row1.SteeringAngle") != nullptr,
         "equivalent axle steering projected");
-  for (const auto &point : snapshot.data_points) {
-    Check(point.timestamp == snapshot.timestamp,
-          "all state points share one frame timestamp");
-  }
+  Check(std::get<double>(
+            Find(snapshot, "Vehicle.CurrentLocation.Latitude")->value) ==
+            52.520008,
+        "GNSS latitude projected");
+  Check(std::get<std::uint64_t>(
+            Find(snapshot, "Vehicle.CarlaSimulation.GnssFrameId")->value) ==
+            98,
+        "GNSS source frame projected");
+  Check(Find(snapshot, "Vehicle.CurrentLocation.Latitude")->timestamp ==
+            "1970-01-01T00:00:01.134Z",
+        "GNSS point retains sensor timestamp");
+  Check(Find(snapshot, "Vehicle.Speed")->timestamp == snapshot.timestamp,
+        "vehicle point retains state frame timestamp");
 
   LatestVssSignalStore store;
   Check(store.Publish(snapshot), "first frame accepted");
@@ -87,6 +105,8 @@ int main() {
         "unavailable RPM omitted");
   Check(Find(missing, "Vehicle.Chassis.Axle.Row1.SteeringAngle") == nullptr,
         "unavailable steering omitted");
+  Check(Find(missing, "Vehicle.CurrentLocation.Latitude") == nullptr,
+        "missing GNSS omitted instead of replaced by zero");
 
   if (failures == 0) {
     std::cout << "VSS projection tests passed\n";

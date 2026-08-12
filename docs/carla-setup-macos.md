@@ -2,7 +2,7 @@
 
 ## Tested baseline
 
-M1/M2 are developed and tested against:
+M1–M3 are developed and tested against:
 
 - CARLA fork: `alexmaninblack/carla`;
 - branch: `macos-apple-silicon`;
@@ -51,7 +51,7 @@ LibCarla requires C++20, so enabling CARLA connectivity raises the complete
 runtime build to C++20. The default dependency-free build uses the same
 language level to prevent the two modes from drifting.
 
-## Start CARLA and validate M2
+## Start CARLA and validate M3
 
 Start the CARLA Unreal application, or open `CarlaUnreal.uproject` in Unreal
 Editor and enter Play mode. The server must listen on RPC port 2000 before the
@@ -73,6 +73,8 @@ Expected output includes:
 - frame ID, simulation time, UTC timestamp, speed, and VSS point count for
   every accepted frame;
 - confirmation that only one latest snapshot was retained;
+- creation of a 10 Hz GNSS sensor and a source `gnss_frame` in VSS summaries;
+- accepted/rejected GNSS fix counters and sensor cleanup before vehicle cleanup;
 - destruction of the actor on exit only when this runtime spawned it.
 
 Use `--no-spawn` to avoid creating an actor. This does not make the default run
@@ -94,6 +96,11 @@ reported three accepted updates with one retained snapshot, and the owned ego
 vehicle was destroyed. The pinned CARLA commit replaces the UE5 zero-value
 wheel-angle stub with live Chaos wheel state.
 
+The M3 acceptance test used a 12-second real-time drive on `Town10HD_Opt`.
+The runtime published 240 vehicle-state VSS snapshots, accepted exactly 120
+10 Hz GNSS fixes, rejected none, projected 19 points when all optional values
+were available, and destroyed GNSS actor `36` before ego vehicle `35`.
+
 ## Command-line options
 
 | Option | Default | Meaning |
@@ -109,6 +116,12 @@ wheel-angle stub with live Chaos wheel state.
 | `--max-frames` | `1` | Number of snapshots; `0` is unlimited |
 | `--run-seconds` | `0` | Optional wall-clock limit; when positive it disables the implicit one-frame limit unless `--max-frames` is also supplied |
 | `--fixed-delta-seconds` | `0.05` | Simulation step used by the tick owner |
+| `--real-time` | off | Pace owned ticks against wall-clock time |
+| `--autopilot` | off | Enable synchronous Traffic Manager control |
+| `--chase-camera` | off | Follow the ego vehicle with the spectator |
+| `--gnss-sensor-tick-seconds` | `0.1` | GNSS measurement period |
+| `--gnss-max-age-seconds` | `0.25` | Omit older retained GNSS fixes |
+| `--log-every-frames` | `1` | Print one sample summary every N frames |
 | `--observe-ticks` | off | Wait for an external tick owner without changing world settings |
 
 The runtime tries every recommended map spawn point in deterministic order if

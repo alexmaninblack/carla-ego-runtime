@@ -33,3 +33,16 @@ Vehicle.CarlaSimulation.SimulationTime:
   unit: s
   min: 0
   description: Elapsed CARLA simulation time.
+
+Vehicle.CarlaSimulation.GnssFrameId:
+  datatype: uint64
+  type: sensor
+  min: 0
+  description: CARLA source frame of the retained GNSS fix.
+
+Vehicle.CarlaSimulation.GnssSimulationTime:
+  datatype: double
+  type: sensor
+  unit: s
+  min: 0
+  description: CARLA source simulation time of the retained GNSS fix.

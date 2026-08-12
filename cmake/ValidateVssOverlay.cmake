@@ -10,7 +10,9 @@ foreach(path IN ITEMS
     "Vehicle.CarlaSimulation.RunId:"
     "Vehicle.CarlaSimulation.EgoVehicleId:"
     "Vehicle.CarlaSimulation.FrameId:"
-    "Vehicle.CarlaSimulation.SimulationTime:")
+    "Vehicle.CarlaSimulation.SimulationTime:"
+    "Vehicle.CarlaSimulation.GnssFrameId:"
+    "Vehicle.CarlaSimulation.GnssSimulationTime:")
   string(FIND "${overlay}" "${path}" position)
   if(position EQUAL -1)
     message(FATAL_ERROR "VSS overlay is missing ${path}")

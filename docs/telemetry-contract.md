@@ -1,7 +1,7 @@
 # VISS/VSS telemetry contract v0.1
 
-Status: **implemented for the M2 vehicle-state subset**. GNSS is an M3
-addition and VISS network conformance remains an M4 deliverable.
+Status: **implemented for the M3 vehicle-state and GNSS subset**. VISS network
+conformance remains an M4 deliverable.
 
 ## Standards baseline
 
@@ -81,6 +81,8 @@ The following project-owned paths extend, but do not modify, VSS 6.0:
 | `Vehicle.CarlaSimulation.EgoVehicleId` | `string` sensor | Stable ego-vehicle identifier within the run. |
 | `Vehicle.CarlaSimulation.FrameId` | `uint64` sensor | CARLA simulation frame represented by the sample. |
 | `Vehicle.CarlaSimulation.SimulationTime` | `double`, s | Exact CARLA elapsed simulation time. |
+| `Vehicle.CarlaSimulation.GnssFrameId` | `uint64` sensor | Source CARLA frame of the retained GNSS fix. |
+| `Vehicle.CarlaSimulation.GnssSimulationTime` | `double`, s | Source CARLA simulation time of the retained GNSS fix. |
 
 The versioned artifact is
 [`vss/Vehicle.CarlaSimulation.vspec`](../vss/Vehicle.CarlaSimulation.vspec).
@@ -101,23 +103,31 @@ slower or faster than real time or the runtime attaches after frame zero.
 authoritative deterministic synchronization values. A consumer must not infer
 the CARLA frame solely from the formatted VISS timestamp. Vehicle-state values
 are updated every simulation frame (nominally 20 Hz), while GNSS values update
-at 10 Hz and retain their most recent individual data-point timestamp.
+at 10 Hz and retain their most recent individual data-point timestamp and
+source-frame metadata. A fix is included only when its source frame is not
+newer than the assembled vehicle frame and its simulated age is at most 0.25
+seconds.
 
 ## Missing and unavailable data
 
 The runtime does not replace unavailable optional values with zero. Invalid or
 unavailable RPM and equivalent steering are omitted from the frame snapshot.
+Missing, future, malformed, out-of-order, or stale GNSS fixes are likewise
+omitted rather than replaced by zero coordinates. The GNSS callback handoff
+retains at most one ordered fix and exposes accepted/rejected counters.
 The corresponding VISS per-request error behavior will be validated with the
 M4 server implementation.
 
 ## Frame store invariant
 
 The designated owner advances CARLA by exactly one synchronous tick and then
-builds one snapshot from that world frame. Every point in the snapshot shares
-the same anchored UTC timestamp, frame ID, and simulation time. The store
-accepts only strictly increasing frame IDs and replaces its single retained
-snapshot atomically; duplicates and out-of-order frames are rejected. It never
-queues historical frames.
+builds one snapshot from that world frame. Vehicle-state points share the
+anchored timestamp and metadata of that state frame. Retained 10 Hz GNSS points
+keep the GNSS sensor's own timestamp and expose their source frame/time through
+the simulation overlay. The snapshot store accepts only strictly increasing
+state frame IDs and replaces its single retained snapshot atomically;
+duplicates and out-of-order state frames are rejected. It never queues
+historical snapshots.
 
 ## Not included in v0.1
 

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   carla_ego_runtime
-  VERSION 0.3.0
+  VERSION 0.4.0
   DESCRIPTION "Native runtime and telemetry gateway for a CARLA ego vehicle"
   LANGUAGES CXX
 )
@@ -16,6 +16,7 @@ option(
 add_library(
   carla-ego-runtime-core STATIC
   src/runtime_options.cpp
+  src/gnss.cpp
   src/vehicle_state.cpp
   src/vss.cpp
 )
@@ -66,6 +67,11 @@ if(BUILD_TESTING)
   add_test(NAME runtime_options COMMAND runtime-options-test)
   add_test(NAME vehicle_state COMMAND vehicle-state-test)
   add_test(NAME vss_projection COMMAND vss-projection-test)
+
+  add_executable(gnss-test tests/gnss_test.cpp)
+  target_link_libraries(gnss-test PRIVATE carla-ego-runtime-core)
+  carla_ego_enable_warnings(gnss-test)
+  add_test(NAME gnss COMMAND gnss-test)
   add_test(
     NAME vss_overlay
     COMMAND

@@ -44,10 +44,10 @@ update for every simulation frame without an unbounded queue.
 
 ## M3 — GNSS
 
-- Attach one configurable `sensor.other.gnss` actor to the ego vehicle.
-- Receive fixes at 10 Hz and preserve CARLA frame/timestamp metadata.
-- Map fixes to the standard `Vehicle.CurrentLocation.*` paths.
-- Add lifecycle, stale-value, and missing-data handling.
+- [x] Attach one configurable `sensor.other.gnss` actor to the ego vehicle.
+- [x] Receive fixes at 10 Hz and preserve CARLA frame/timestamp metadata.
+- [x] Map fixes to the standard `Vehicle.CurrentLocation.*` paths.
+- [x] Add lifecycle, stale-value, and missing-data handling.
 
 Exit criterion: vehicle state and GNSS remain ordered and attributable to the
 same simulator run during a continuous drive.

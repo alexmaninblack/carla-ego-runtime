@@ -1,4 +1,5 @@
 #include "carla_ego_runtime/runtime.hpp"
+#include "carla_ego_runtime/gnss.hpp"
 #include "carla_ego_runtime/vehicle_state.hpp"
 #include "carla_ego_runtime/vss.hpp"
 
@@ -9,6 +10,8 @@
 #include <carla/client/BlueprintLibrary.h>
 #include <carla/client/Client.h>
 #include <carla/client/Map.h>
+#include <carla/client/Sensor.h>
+#include <carla/client/ServerSideSensor.h>
 #include <carla/client/TimeoutException.h>
 #include <carla/client/Vehicle.h>
 #include <carla/client/World.h>
@@ -16,6 +19,8 @@
 #include <carla/geom/Rotation.h>
 #include <carla/geom/Transform.h>
 #include <carla/trafficmanager/TrafficManager.h>
+#include <carla/sensor/SensorData.h>
+#include <carla/sensor/data/GnssMeasurement.h>
 
 #include <chrono>
 #include <csignal>
@@ -23,6 +28,7 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -177,6 +183,50 @@ class TrafficManagerGuard {
   bool active_ = false;
 };
 
+class OwnedSensorGuard {
+ public:
+  explicit OwnedSensorGuard(carla::SharedPtr<cc::Sensor> sensor)
+      : sensor_(std::move(sensor)) {}
+
+  OwnedSensorGuard(const OwnedSensorGuard &) = delete;
+  OwnedSensorGuard &operator=(const OwnedSensorGuard &) = delete;
+
+  ~OwnedSensorGuard() { DestroyNoThrow(); }
+
+  bool Destroy() {
+    if (!sensor_) {
+      return true;
+    }
+    if (sensor_->IsListening()) {
+      sensor_->Stop();
+    }
+    const auto actor_id = sensor_->GetId();
+    const bool destroyed = !sensor_->IsAlive() || sensor_->Destroy();
+    if (destroyed) {
+      std::cout << "Destroyed runtime-owned GNSS sensor id=" << actor_id
+                << '\n';
+      sensor_.reset();
+    }
+    return destroyed;
+  }
+
+ private:
+  void DestroyNoThrow() noexcept {
+    try {
+      if (!Destroy()) {
+        std::cerr << "Failed to destroy runtime-owned GNSS sensor\n";
+      }
+    } catch (const std::exception &error) {
+      std::cerr << "Failed to destroy runtime-owned GNSS sensor: "
+                << error.what() << '\n';
+    } catch (...) {
+      std::cerr << "Failed to destroy runtime-owned GNSS sensor: unknown error\n";
+    }
+  }
+
+  carla::SharedPtr<cc::Sensor> sensor_;
+};
+
 bool HasRoleName(const cc::Actor &actor, const std::string &role_name) {
   for (const auto &attribute : actor.GetAttributes()) {
     if (attribute.GetId() == "role_name" &&
@@ -301,6 +351,43 @@ carla::geom::Transform ChaseCameraTransform(const cc::Vehicle &vehicle) {
   return {location, rotation};
 }
 
+std::string FormatSensorTick(double seconds) {
+  std::ostringstream output;
+  output << std::setprecision(std::numeric_limits<double>::max_digits10)
+         << seconds;
+  return output.str();
+}
+
+carla::SharedPtr<cc::Sensor> SpawnGnssSensor(
+    cc::World &world, cc::Vehicle &vehicle,
+    double sensor_tick_seconds) {
+  const auto blueprints = world.GetBlueprintLibrary();
+  if (!blueprints) {
+    throw std::runtime_error("CARLA returned no blueprint library for GNSS");
+  }
+  const auto *definition = blueprints->Find("sensor.other.gnss");
+  if (!definition) {
+    throw std::runtime_error("CARLA GNSS blueprint is unavailable");
+  }
+  auto blueprint = *definition;
+  if (!blueprint.ContainsAttribute("sensor_tick")) {
+    throw std::runtime_error("CARLA GNSS blueprint has no sensor_tick");
+  }
+  blueprint.SetAttribute("sensor_tick", FormatSensorTick(sensor_tick_seconds));
+
+  carla::geom::Transform relative_transform{
+      carla::geom::Location{0.0f, 0.0f, 2.0f},
+      carla::geom::Rotation{0.0f, 0.0f, 0.0f}};
+  auto actor = world.SpawnActor(blueprint, relative_transform, &vehicle,
+                                carla::rpc::AttachmentType::Rigid);
+  auto sensor = std::dynamic_pointer_cast<cc::Sensor>(actor);
+  if (!sensor) {
+    actor->Destroy();
+    throw std::runtime_error("spawned GNSS actor is not a CARLA sensor");
+  }
+  return sensor;
+}
+
 CarlaVehicleSample CollectSample(
     const cc::WorldSnapshot &snapshot, cc::Vehicle &vehicle,
     const std::string &run_id, const SimulationClockAnchor &clock_anchor) {
@@ -376,6 +463,27 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
   const auto started_at = std::chrono::steady_clock::now();
   const auto run_id = GenerateRunId();
   std::optional<SimulationClockAnchor> clock_anchor;
+  LatestGnssFixStore gnss_store;
+  auto gnss_sensor = SpawnGnssSensor(
+      world, *vehicle, options.gnss_sensor_tick_seconds);
+  OwnedSensorGuard gnss_guard(gnss_sensor);
+  gnss_sensor->Listen([&gnss_store](
+                          carla::SharedPtr<carla::sensor::SensorData> data) {
+    const auto measurement =
+        std::dynamic_pointer_cast<carla::sensor::data::GnssMeasurement>(data);
+    if (!measurement) {
+      return;
+    }
+    gnss_store.Publish({
+        static_cast<std::uint64_t>(measurement->GetFrame()),
+        measurement->GetTimestamp(),
+        measurement->GetLatitude(),
+        measurement->GetLongitude(),
+        measurement->GetAltitude()});
+  });
+  std::cout << "GNSS sensor: enabled (period "
+            << options.gnss_sensor_tick_seconds << " s, actor id="
+            << gnss_sensor->GetId() << ")\n";
   LatestVssSignalStore signal_store;
   std::uint64_t frame_count = 0;
   auto next_tick_at = started_at;
@@ -398,7 +506,14 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
 
     const auto normalized = NormalizeVehicleSample(
         CollectSample(snapshot, *vehicle, run_id, *clock_anchor));
-    auto vss_snapshot = ProjectToVss(normalized);
+    std::optional<NormalizedGnssFix> normalized_gnss;
+    const auto gnss_sample = gnss_store.LatestFor(
+        normalized.frame_id, normalized.simulation_time_s,
+        options.gnss_max_age_seconds);
+    if (gnss_sample.has_value()) {
+      normalized_gnss = NormalizeGnssSample(*gnss_sample, *clock_anchor);
+    }
+    auto vss_snapshot = ProjectToVss(normalized, normalized_gnss);
     if (!signal_store.Publish(std::move(vss_snapshot))) {
       throw std::runtime_error("duplicate or out-of-order CARLA frame " +
                                std::to_string(snapshot.GetFrame()));
@@ -415,13 +530,22 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
                 << " simulation_time=" << normalized.simulation_time_s
                 << " timestamp=" << signal_store.Latest()->timestamp
                 << " speed_kmh=" << normalized.speed_mps * 3.6
+                << " gnss_frame="
+                << (normalized_gnss.has_value()
+                        ? std::to_string(normalized_gnss->source_frame_id)
+                        : std::string("unavailable"))
                 << " points=" << signal_store.Latest()->data_points.size()
                 << '\n';
     }
   }
 
   std::cout << "Published " << signal_store.publish_count()
-            << " frame-aligned VSS state update(s); retained snapshots=1\n";
+            << " frame-aligned VSS state update(s); retained snapshots=1\n"
+            << "GNSS fixes accepted=" << gnss_store.publish_count()
+            << " rejected=" << gnss_store.rejected_count() << '\n';
+  if (!gnss_guard.Destroy()) {
+    throw std::runtime_error("failed to destroy GNSS sensor");
+  }
   if (traffic_manager_guard) {
     traffic_manager_guard->Restore();
   }
