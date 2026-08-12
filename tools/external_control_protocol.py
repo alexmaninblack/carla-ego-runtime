@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
+SUPPORTED_VERSIONS = {1, 2}
+DRIVE_MODES = {"safe_stop", "manual", "autopilot"}
 MAX_MESSAGE_BYTES = 16 * 1024
 SAFE_CONTROL = {"throttle": 0.0, "brake": 1.0, "steering": 0.0}
 
@@ -44,6 +46,7 @@ class AppliedControl:
     sequence: int
     safe_stop: bool
     reason: str
+    mode: str
 
 
 def _number(value: Any, name: str, minimum: float, maximum: float) -> float:
@@ -71,6 +74,7 @@ class ExternalControlState:
         command_timeout_seconds: float,
         ownership_timeout_seconds: float,
         event_sink: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        mode_validator: Optional[Callable[[str], Optional[str]]] = None,
     ):
         if not token:
             raise ValueError("token must not be empty")
@@ -82,6 +86,7 @@ class ExternalControlState:
         self._command_timeout = command_timeout_seconds
         self._ownership_timeout = ownership_timeout_seconds
         self._event_sink = event_sink
+        self._mode_validator = mode_validator
         self._lock = threading.Lock()
         self._session_id: Optional[str] = None
         self._client_id: Optional[str] = None
@@ -90,6 +95,7 @@ class ExternalControlState:
         self._last_heartbeat_at: Optional[float] = None
         self._command = dict(SAFE_CONTROL)
         self._safe_stop_reason = "startup"
+        self._mode = "safe_stop"
         self._metrics: Dict[str, int] = {
             "acquisitions": 0,
             "commands": 0,
@@ -99,6 +105,9 @@ class ExternalControlState:
             "command_timeouts": 0,
             "ownership_timeouts": 0,
             "rejected_messages": 0,
+            "mode_changes": 0,
+            "manual_activations": 0,
+            "autopilot_activations": 0,
         }
 
     def _event(self, event: str, **fields: Any) -> None:
@@ -121,6 +130,7 @@ class ExternalControlState:
             self._event("safe_stop_selected", reason=reason)
 
     def _drop_ownership(self, reason: str) -> None:
+        self._mode = "safe_stop"
         self._select_safe_stop(reason)
         self._session_id = None
         self._client_id = None
@@ -138,8 +148,9 @@ class ExternalControlState:
     def _handle_locked(
         self, message: Dict[str, Any], now: float
     ) -> Dict[str, Any]:
-        if message.get("version") != CONTRACT_VERSION:
-            raise ControlProtocolError("bad_request", "version must be 1")
+        version = message.get("version")
+        if version not in SUPPORTED_VERSIONS:
+            raise ControlProtocolError("bad_request", "version must be 1 or 2")
         action = _string(message, "action")
         _string(message, "requestId")
 
@@ -155,13 +166,22 @@ class ExternalControlState:
             self._last_sequence = 0
             self._last_command_at = now
             self._last_heartbeat_at = now
-            self._safe_stop_reason = "awaiting_command"
+            if version == 1:
+                self._mode = "manual"
+                self._safe_stop_reason = "awaiting_command"
+            else:
+                self._mode = "safe_stop"
+                self._select_safe_stop("acquired")
             self._metrics["acquisitions"] += 1
             self._event("control_acquired", client_id=client_id)
             return {"status": "ok", "sessionId": self._session_id}
 
         if action == "command":
             self._require_session(message)
+            if self._mode != "manual":
+                raise ControlProtocolError(
+                    "invalid_mode", "manual mode is required for commands"
+                )
             sequence = message.get("sequence")
             if (
                 isinstance(sequence, bool)
@@ -189,6 +209,46 @@ class ExternalControlState:
             self._safe_stop_reason = "command"
             self._metrics["commands"] += 1
             return {"status": "ok", "sequence": sequence}
+
+        if action == "set_mode":
+            if version != 2:
+                raise ControlProtocolError(
+                    "bad_request", "set_mode requires protocol version 2"
+                )
+            self._require_session(message)
+            mode = _string(message, "mode")
+            if mode not in DRIVE_MODES:
+                raise ControlProtocolError(
+                    "invalid_mode", "mode must be safe_stop, manual, or autopilot"
+                )
+            previous_mode = self._mode
+            if mode == previous_mode:
+                self._last_heartbeat_at = now
+                return {"status": "ok", "mode": mode}
+            if self._mode_validator is not None:
+                unavailable = self._mode_validator(mode)
+                if unavailable is not None:
+                    raise ControlProtocolError("mode_unavailable", unavailable)
+            self._mode = mode
+            self._last_heartbeat_at = now
+            if mode == "manual":
+                self._select_safe_stop("awaiting_command")
+                self._metrics["manual_activations"] += 1
+            elif mode == "autopilot":
+                self._command = dict(SAFE_CONTROL)
+                self._last_command_at = None
+                self._safe_stop_reason = "autopilot"
+                self._metrics["autopilot_activations"] += 1
+            else:
+                self._select_safe_stop("operator_stop")
+            self._metrics["mode_changes"] += 1
+            self._event(
+                "drive_mode_changed",
+                previous_mode=previous_mode,
+                mode=mode,
+                client_id=self._client_id,
+            )
+            return {"status": "ok", "mode": mode}
 
         if action == "heartbeat":
             self._require_session(message)
@@ -222,7 +282,7 @@ class ExternalControlState:
                 if now - self._last_heartbeat_at > self._ownership_timeout:
                     self._metrics["ownership_timeouts"] += 1
                     self._drop_ownership("ownership_timeout")
-                elif (
+                elif self._mode == "manual" and (
                     self._last_command_at is None
                     or now - self._last_command_at > self._command_timeout
                 ):
@@ -234,8 +294,12 @@ class ExternalControlState:
                 brake=float(self._command["brake"]),
                 steering=float(self._command["steering"]),
                 sequence=self._last_sequence,
-                safe_stop=self._safe_stop_reason != "command",
+                safe_stop=(
+                    self._mode == "safe_stop"
+                    or (self._mode == "manual" and self._safe_stop_reason != "command")
+                ),
                 reason=self._safe_stop_reason,
+                mode=self._mode,
             )
 
     def snapshot(self) -> Dict[str, Any]:
@@ -245,13 +309,14 @@ class ExternalControlState:
                 "session_active": self._session_id is not None,
                 "last_sequence": self._last_sequence,
                 "safe_stop_reason": self._safe_stop_reason,
+                "mode": self._mode,
                 **self._metrics,
             }
 
 
 def success_response(message: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "version": CONTRACT_VERSION,
+        "version": message.get("version", CONTRACT_VERSION),
         "action": message.get("action", "unknown"),
         "requestId": message.get("requestId", ""),
         "ts": utc_now(),
@@ -263,7 +328,7 @@ def error_response(
     message: Dict[str, Any], error: ControlProtocolError
 ) -> Dict[str, Any]:
     return {
-        "version": CONTRACT_VERSION,
+        "version": message.get("version", CONTRACT_VERSION),
         "action": message.get("action", "unknown"),
         "requestId": message.get("requestId", ""),
         "ts": utc_now(),
@@ -380,7 +445,7 @@ class LocalControlServer:
                             )
                         message = parsed
                         action = message.get("action")
-                        if action in {"command", "heartbeat", "release"} and (
+                        if action in {"command", "heartbeat", "release", "set_mode"} and (
                             connection_session is None
                             or message.get("sessionId") != connection_session
                         ):

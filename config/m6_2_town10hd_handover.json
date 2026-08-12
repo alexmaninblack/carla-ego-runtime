@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "controller": {
+    "type": "external_control",
+    "external_control": {
+      "command_timeout_seconds": 0.25,
+      "ownership_timeout_seconds": 1.0,
+      "maximum_session_seconds": 3600
+    },
+    "autopilot": {
+      "traffic_manager_port": 8000,
+      "random_seed": 42,
+      "speed_difference_percent": 35,
+      "automatic_lane_change": false,
+      "maximum_road_distance_m": 2.5,
+      "maximum_heading_error_degrees": 60,
+      "manual_handover_seconds": 0.3
+    }
+  },
+  "carla": {
+    "host": "127.0.0.1",
+    "port": 2000,
+    "timeout_seconds": 20,
+    "expected_map": "Carla/Maps/Town10HD_Opt",
+    "source_commit": "385927b6ac5efaaa204b5b9853a7aaa5c5917428"
+  },
+  "simulation": {
+    "fixed_delta_seconds": 0.03333333333333333,
+    "real_time": true,
+    "maximum_route_seconds": 3600,
+    "startup_gate_timeout_seconds": 60,
+    "shutdown_gate_timeout_seconds": 30
+  },
+  "vehicle": {
+    "blueprint": "vehicle.lincoln.mkz",
+    "role_name": "hero"
+  },
+  "route": {
+    "name": "town10_live_handover",
+    "start_spawn_point": 40,
+    "destination_spawn_points": [0],
+    "cycles": 1,
+    "minimum_leg_distance_m": 50
+  },
+  "runtime": {
+    "viss_bind_address": "127.0.0.1",
+    "viss_port": 6443,
+    "log_every_frames": 30,
+    "dashboard_period_ms": 250,
+    "chase_camera": true,
+    "chase_camera_response": 10,
+    "chase_camera_update_hz": 60,
+    "exposure_offset": -0.35
+  }
+}

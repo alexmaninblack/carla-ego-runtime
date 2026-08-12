@@ -18,7 +18,9 @@ flowchart LR
     end
     C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| K
     B["BehaviorAgent route<br/>M5/M5.1"] -->|"Selectable tick owner"| C
-    ECTL["Independent M6 client"] -->|"Authenticated local socket"| XCTL["External-control tick owner"]
+    ECTL["M6.2 keyboard panel"] -->|"Authenticated local socket"| XCTL["Hybrid external-control tick owner"]
+    XCTL -->|"Registers the same actor"| TM["CARLA Traffic Manager"]
+    TM -->|"Automatic mode commands"| C
     XCTL -->|"Vehicle control and simulation ticks"| C
     S -->|"JSON over WSS: Read and Subscribe"| E["VISS clients"]
     ROS -.-> X["Autoware, RViz, rosbag, ROS nodes"]
@@ -47,8 +49,9 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
    compatibility profile.
 8. **Control source** — either the BehaviorAgent route process or the M6
    external-control process owns the synchronous clock and ego vehicle; the C++
-   telemetry runtime observes its ticks and does not own its actor. The sources
-   are selected explicitly and never run together. See
+   telemetry runtime observes its ticks and does not own its actor. In M6.2 the
+   external-control owner switches its one actor among manual, Traffic Manager,
+   and safe-stop commands without starting another tick owner. See
    [ADR 0008](decisions/0008-replaceable-external-control-source.md) and
    [ADR 0009](decisions/0009-local-external-control-channel.md).
 
@@ -73,7 +76,7 @@ VISS features remain outside that documented conformance claim.
 
 M6 does not turn VISS into an actuator interface. Vehicle commands use the
 separate authenticated local contract described in
-[External control contract v1](external-control-contract.md), so telemetry
+[External control contract v2](external-control-contract.md), so telemetry
 consumers cannot accidentally acquire actuator ownership.
 
 The endpoint is embedded with Boost.Beast/Asio and OpenSSL. The decision and

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cold/warm launcher for an observable CARLA M6.1 keyboard-drive session."""
+"""Cold/warm launcher for a CARLA M6.2 live-handover session."""
 
 from __future__ import annotations
 
@@ -186,13 +186,13 @@ def run(arguments: argparse.Namespace) -> int:
     arguments.keyboard_ui = build_keyboard_app(arguments)
     timeline_mark(timeline_file, started_at, "keyboard_app_ready")
 
-    lock = BASE.SessionLock(arguments.run_root / ".m6_1-session.lock")
+    lock = BASE.SessionLock(arguments.run_root / ".m6_2-session.lock")
     simulator: Optional[subprocess.Popen[str]] = None
     simulator_log: Optional[TextIO] = None
     orchestrator: Optional[subprocess.Popen[str]] = None
     try:
         lock.acquire()
-        print("\033]0;CARLA M6.1 — VSS Dashboard\007", end="", flush=True)
+        print("\033]0;CARLA M6.2 — VSS Dashboard\007", end="", flush=True)
         print("[1/5] Preflight: checking CARLA and local components...", flush=True)
         carla = BASE.import_carla(arguments.python_api_root)
         carla_config = config["carla"]
@@ -258,7 +258,7 @@ def run(arguments: argparse.Namespace) -> int:
         if orchestrator.returncode == 0 and not manual_run_cleanup_is_valid(
             run_directory
         ):
-            raise RuntimeError("manual-drive cleanup verification failed")
+            raise RuntimeError("live-handover cleanup verification failed")
         if orchestrator.returncode == 0:
             timeline_mark(timeline_file, started_at, "run_cleanup_verified")
         return int(orchestrator.returncode)
@@ -313,10 +313,10 @@ def main() -> int:
     try:
         return run(arguments)
     except InterruptedError:
-        print("M6.1 launcher stopped cleanly by the operator.", flush=True)
+        print("M6.2 launcher stopped cleanly by the operator.", flush=True)
         return 130
     except (OSError, RuntimeError, TimeoutError, ValueError, json.JSONDecodeError) as error:
-        print(f"M6.1 launcher error: {error}", file=sys.stderr, flush=True)
+        print(f"M6.2 launcher error: {error}", file=sys.stderr, flush=True)
         return 2
 
 

@@ -43,7 +43,9 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   manifests, independent VISS probes, and restart testing;
 - an authenticated local M6 control contract with exclusive ownership,
   monotonic command sequences, independent command/ownership deadlines, and
-  full-brake safe stop on timeout, release, disconnect, or shutdown.
+  full-brake safe stop on timeout, release, disconnect, or shutdown;
+- live M6.2 switching among manual control, synchronous Traffic Manager
+  autopilot, and safe stop without replacing the vehicle or interrupting VISS.
 
 Run `carla-ego-runtime --help` for all connection and vehicle options.
 
@@ -188,6 +190,12 @@ start launcher keeps the live VSS dashboard visible in Terminal and records a
 machine-readable startup timeline. See
 [M6.1 keyboard driving](docs/m6-1-keyboard-driving.md).
 
+M6.2 extends the panel and local contract with explicit Manual Control,
+Autopilot, and Safe Stop modes. The same ego actor and external-control tick
+owner remain active through every handover, while the terminal VSS dashboard
+continues to show live telemetry. See
+[M6.2 live handover](docs/m6-2-live-handover.md).
+
 ## Documentation
 
 - [Native CARLA setup on macOS](docs/carla-setup-macos.md)
@@ -200,6 +208,7 @@ machine-readable startup timeline. See
 - [External-control contract](docs/external-control-contract.md)
 - [M6 external-control operations and acceptance](docs/m6-operations.md)
 - [M6.1 keyboard driving](docs/m6-1-keyboard-driving.md)
+- [M6.2 live handover](docs/m6-2-live-handover.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies and licences](THIRD_PARTY.md)

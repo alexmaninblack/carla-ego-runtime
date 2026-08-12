@@ -72,13 +72,63 @@ def atomic_write_json(path: Optional[Path], payload: Dict[str, Any]) -> None:
     M5.atomic_write_json(path, payload)
 
 
+def autopilot_unavailable_reason(
+    vehicle: Any,
+    carla_map: Any,
+    carla: Any,
+    maximum_road_distance_m: float,
+    maximum_heading_error_degrees: float,
+) -> Optional[str]:
+    transform = vehicle.get_transform()
+    waypoint = carla_map.get_waypoint(
+        transform.location,
+        project_to_road=True,
+        lane_type=carla.LaneType.Driving,
+    )
+    if waypoint is None:
+        return "autopilot is unavailable away from a driving lane"
+    if transform.location.distance(waypoint.transform.location) > maximum_road_distance_m:
+        return "autopilot is unavailable away from the road"
+    vehicle_forward = transform.get_forward_vector()
+    road_forward = waypoint.transform.get_forward_vector()
+    dot = max(
+        -1.0,
+        min(
+            1.0,
+            vehicle_forward.x * road_forward.x
+            + vehicle_forward.y * road_forward.y
+            + vehicle_forward.z * road_forward.z,
+        ),
+    )
+    heading_error = math.degrees(math.acos(dot))
+    if heading_error > maximum_heading_error_degrees:
+        return "autopilot is unavailable while facing against the driving lane"
+    return None
+
+
+def blend_control(carla: Any, first: Any, second: Any, alpha: float) -> Any:
+    alpha = max(0.0, min(1.0, alpha))
+    throttle = (1.0 - alpha) * float(first.throttle) + alpha * float(second.throttle)
+    brake = (1.0 - alpha) * float(first.brake) + alpha * float(second.brake)
+    overlap = min(throttle, brake)
+    throttle -= overlap
+    brake -= overlap
+    return carla.VehicleControl(
+        throttle=throttle,
+        brake=brake,
+        steer=(1.0 - alpha) * float(first.steer) + alpha * float(second.steer),
+    )
+
+
 def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int:
     carla, _ = M5.import_carla(arguments.python_api_root)
     carla_config = config["carla"]
     simulation = config["simulation"]
     vehicle_config = config["vehicle"]
     route_config = config["route"]
-    control_config = config["controller"]["external_control"]
+    controller_config = config["controller"]
+    control_config = controller_config["external_control"]
+    autopilot_config = controller_config.get("autopilot")
     status: Dict[str, Any] = {
         "schema_version": 1,
         "state": "starting",
@@ -106,6 +156,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
     stopped = False
     control_events = []
     status_lock = threading.Lock()
+    availability_lock = threading.Lock()
+    autopilot_unavailable = (
+        "autopilot is not configured" if autopilot_config is None else None
+    )
 
     def write_status(**fields: Any) -> None:
         with status_lock:
@@ -119,6 +173,12 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
 
     def write_control_snapshot(snapshot: Dict[str, Any]) -> None:
         write_status(control=snapshot)
+
+    def validate_mode(mode: str) -> Optional[str]:
+        if mode != "autopilot":
+            return None
+        with availability_lock:
+            return autopilot_unavailable
 
     try:
         existing = [
@@ -148,12 +208,35 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             raise RuntimeError(f"start spawn point {start_index} is occupied")
         world.tick(float(carla_config["timeout_seconds"]))
 
+        traffic_manager = None
+        traffic_manager_port = None
+        if autopilot_config is not None:
+            traffic_manager_port = int(autopilot_config["traffic_manager_port"])
+            traffic_manager = client.get_trafficmanager(traffic_manager_port)
+            traffic_manager.set_synchronous_mode(True)
+            traffic_manager.set_random_device_seed(int(autopilot_config["random_seed"]))
+            traffic_manager.vehicle_percentage_speed_difference(
+                vehicle, float(autopilot_config["speed_difference_percent"])
+            )
+            traffic_manager.auto_lane_change(
+                vehicle, bool(autopilot_config["automatic_lane_change"])
+            )
+            with availability_lock:
+                autopilot_unavailable = autopilot_unavailable_reason(
+                    vehicle,
+                    carla_map,
+                    carla,
+                    float(autopilot_config["maximum_road_distance_m"]),
+                    float(autopilot_config["maximum_heading_error_degrees"]),
+                )
+
         token = PROTOCOL.LocalControlServer.create_token_file(arguments.token_file)
         control_state = PROTOCOL.ExternalControlState(
             token,
             float(control_config["command_timeout_seconds"]),
             float(control_config["ownership_timeout_seconds"]),
             emit_control,
+            validate_mode,
         )
         server = PROTOCOL.LocalControlServer(
             arguments.socket_file,
@@ -209,25 +292,70 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         last_motion_status_at = started_at
         last_safe_stop: Optional[bool] = None
         last_reason = ""
+        active_mode = "safe_stop"
+        handover_started_at: Optional[float] = None
+        handover_control = None
         while not STOP_REQUESTED:
             now = time.monotonic()
             if now - started_at > float(control_config["maximum_session_seconds"]):
                 completed = True
                 break
             applied = control_state.current_control(now)
-            vehicle.apply_control(
-                carla.VehicleControl(
+            with availability_lock:
+                if autopilot_config is not None:
+                    autopilot_unavailable = autopilot_unavailable_reason(
+                        vehicle,
+                        carla_map,
+                        carla,
+                        float(autopilot_config["maximum_road_distance_m"]),
+                        float(autopilot_config["maximum_heading_error_degrees"]),
+                    )
+            if applied.mode != active_mode:
+                previous_mode = active_mode
+                if active_mode == "autopilot" and traffic_manager_port is not None:
+                    handover_control = vehicle.get_control()
+                    vehicle.set_autopilot(False, traffic_manager_port)
+                    handover_started_at = now if applied.mode == "manual" else None
+                if applied.mode == "autopilot":
+                    if traffic_manager_port is None:
+                        raise RuntimeError("autopilot mode selected without Traffic Manager")
+                    handover_started_at = None
+                    handover_control = None
+                    vehicle.set_autopilot(True, traffic_manager_port)
+                active_mode = applied.mode
+                emit(
+                    "drive_mode_applied",
+                    previous_mode=previous_mode,
+                    mode=active_mode,
+                )
+                write_status(drive_mode=active_mode)
+
+            if active_mode != "autopilot":
+                requested = carla.VehicleControl(
                     throttle=applied.throttle,
                     brake=applied.brake,
                     steer=applied.steering,
                 )
-            )
+                if (
+                    active_mode == "manual"
+                    and handover_started_at is not None
+                    and handover_control is not None
+                    and autopilot_config is not None
+                ):
+                    duration = float(autopilot_config["manual_handover_seconds"])
+                    alpha = (now - handover_started_at) / duration
+                    requested = blend_control(carla, handover_control, requested, alpha)
+                    if alpha >= 1.0:
+                        handover_started_at = None
+                        handover_control = None
+                vehicle.apply_control(requested)
             if applied.safe_stop != last_safe_stop or applied.reason != last_reason:
                 emit(
                     "control_applied",
                     sequence=applied.sequence,
                     safe_stop=applied.safe_stop,
                     reason=applied.reason,
+                    mode=applied.mode,
                 )
                 last_safe_stop = applied.safe_stop
                 last_reason = applied.reason
@@ -302,6 +430,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             server.stop()
         if vehicle is not None:
             try:
+                if "traffic_manager_port" in locals() and traffic_manager_port is not None:
+                    vehicle.set_autopilot(False, traffic_manager_port)
                 vehicle.apply_control(
                     carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
                 )
@@ -309,6 +439,12 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 emit("vehicle_destroyed", vehicle_id=vehicle.id)
             except RuntimeError as error:
                 emit("vehicle_cleanup_failed", error=str(error))
+        if "traffic_manager" in locals() and traffic_manager is not None:
+            try:
+                traffic_manager.set_synchronous_mode(False)
+                emit("traffic_manager_restored")
+            except RuntimeError as error:
+                emit("traffic_manager_restore_failed", error=str(error))
         if settings_changed:
             try:
                 world.apply_settings(original_settings)

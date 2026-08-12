@@ -7,6 +7,9 @@ AppKit panel captures key-down and key-up events only while its own window has
 focus and streams normalized controls through the authenticated local M6
 socket.
 
+M6.2 later extends this panel and contract with live autopilot handover. The
+manual-only M6.1 configuration and its acceptance record remain reproducible.
+
 - Up ramps throttle toward 0.55.
 - Down ramps brake toward 0.75 and immediately suppresses throttle.
 - Left and Right ramp steering toward -0.55 and +0.55; release recentres it.

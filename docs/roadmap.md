@@ -147,9 +147,28 @@ the desktop cold start, manual keyboard drive, live-dashboard review, safe-stop
 checks, and clean exit. The final private run manifest reports completion; the
 controller is stopped with no owner, and its socket and token are removed.
 
+## M6.2 — Live manual and automatic handover
+
+- [x] Add explicit safe-stop, manual, and autopilot states to control contract
+  version 2 while retaining version 1 compatibility.
+- [x] Keep one ego actor and one synchronous tick owner through every handover.
+- [x] Use deterministic synchronous Traffic Manager control for automatic mode.
+- [x] Gate autopilot activation to a nearby, aligned driving lane and blend the
+  automatic-to-manual control transition.
+- [x] Extend the native panel with direct Manual Control, Autopilot, and Safe
+  Stop actions while keeping VSS telemetry visible.
+- [ ] Complete the clean-start operator-observed handover and cleanup acceptance.
+
+Exit criterion: one desktop session can switch repeatedly between manual and
+automatic driving without changing the actor or interrupting VISS, and every
+loss or exit path selects safe stop and cleans up owned resources.
+
+Status: implemented and under acceptance on the pinned Apple Silicon baseline.
+
 ## Deferred
 
 Cameras, LiDAR, radar, ultrasonic modelling, and packaged macOS distribution
-are separate future milestones. ROS 2 may be added
-as an optional adapter only when a concrete ROS-based consumer or tool is in
-scope; it is not part of the core CARLA-to-VISS path.
+are separate future milestones. Previously discussed M7 and M8 work is not
+scheduled and remains explicitly postponed. ROS 2 may be added as an optional
+adapter only when a concrete ROS-based consumer or tool is in scope; it is not
+part of the core CARLA-to-VISS path.

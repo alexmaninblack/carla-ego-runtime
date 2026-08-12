@@ -44,6 +44,32 @@ def command(state, session, sequence, now, **values):
     return state.handle(payload, now)
 
 
+def acquire_v2(state, now=1.0):
+    return state.handle(
+        {
+            "version": 2,
+            "action": "acquire",
+            "requestId": "a2",
+            "clientId": "handover-test-driver",
+            "token": "secret",
+        },
+        now,
+    )["sessionId"]
+
+
+def set_mode(state, session, mode, now):
+    return state.handle(
+        {
+            "version": 2,
+            "action": "set_mode",
+            "requestId": f"mode-{mode}",
+            "sessionId": session,
+            "mode": mode,
+        },
+        now,
+    )
+
+
 class ExternalControlStateTests(unittest.TestCase):
     def setUp(self):
         self.events = []
@@ -139,6 +165,70 @@ class ExternalControlStateTests(unittest.TestCase):
         command(self.state, new_session, 1, 2.1, throttle=0.2)
         self.state.disconnect(new_session)
         self.assertEqual(self.state.current_control(2.2).reason, "disconnect")
+
+    def test_v2_starts_safe_and_switches_manual_autopilot_manual(self):
+        session = acquire_v2(self.state)
+        self.assertEqual(self.state.current_control(1.0).mode, "safe_stop")
+        set_mode(self.state, session, "manual", 1.1)
+        command(self.state, session, 1, 1.2, throttle=0.3)
+        manual = self.state.current_control(1.2)
+        self.assertEqual(manual.mode, "manual")
+        self.assertEqual(manual.throttle, 0.3)
+        set_mode(self.state, session, "autopilot", 1.3)
+        automatic = self.state.current_control(1.5)
+        self.assertEqual(automatic.mode, "autopilot")
+        self.assertFalse(automatic.safe_stop)
+        set_mode(self.state, session, "manual", 1.6)
+        resumed = self.state.current_control(1.6)
+        self.assertEqual(resumed.mode, "manual")
+        self.assertTrue(resumed.safe_stop)
+
+    def test_commands_are_rejected_outside_manual_mode(self):
+        session = acquire_v2(self.state)
+        with self.assertRaises(ControlProtocolError) as stopped:
+            command(self.state, session, 1, 1.1, throttle=0.2)
+        self.assertEqual(stopped.exception.code, "invalid_mode")
+        set_mode(self.state, session, "autopilot", 1.2)
+        with self.assertRaises(ControlProtocolError) as automatic:
+            command(self.state, session, 1, 1.3, throttle=0.2)
+        self.assertEqual(automatic.exception.code, "invalid_mode")
+
+    def test_mode_selection_is_idempotent_and_sequence_never_rewinds(self):
+        session = acquire_v2(self.state)
+        set_mode(self.state, session, "manual", 1.1)
+        command(self.state, session, 4, 1.2, throttle=0.2)
+        set_mode(self.state, session, "manual", 1.3)
+        still_driving = self.state.current_control(1.3)
+        self.assertEqual(still_driving.throttle, 0.2)
+        self.assertFalse(still_driving.safe_stop)
+        set_mode(self.state, session, "autopilot", 1.4)
+        set_mode(self.state, session, "manual", 1.5)
+        with self.assertRaises(ControlProtocolError) as replay:
+            command(self.state, session, 4, 1.6, throttle=0.5)
+        self.assertEqual(replay.exception.code, "invalid_sequence")
+        command(self.state, session, 5, 1.6, throttle=0.3)
+
+    def test_mode_validator_can_reject_autopilot(self):
+        state = ExternalControlState(
+            "secret",
+            0.25,
+            1.0,
+            mode_validator=lambda mode: "return to road" if mode == "autopilot" else None,
+        )
+        session = acquire_v2(state)
+        with self.assertRaises(ControlProtocolError) as unavailable:
+            set_mode(state, session, "autopilot", 1.1)
+        self.assertEqual(unavailable.exception.code, "mode_unavailable")
+        self.assertEqual(state.snapshot()["mode"], "safe_stop")
+
+    def test_disconnect_from_autopilot_always_selects_safe_stop(self):
+        session = acquire_v2(self.state)
+        set_mode(self.state, session, "autopilot", 1.1)
+        self.state.disconnect(session)
+        stopped = self.state.current_control(1.2)
+        self.assertEqual(stopped.mode, "safe_stop")
+        self.assertTrue(stopped.safe_stop)
+        self.assertEqual(stopped.brake, 1.0)
 
 
 class LocalControlServerTests(unittest.TestCase):

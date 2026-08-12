@@ -35,7 +35,16 @@ def require_ok(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class ControlConnection:
-    def __init__(self, socket_path: Path, token_path: Path, client_id: str):
+    def __init__(
+        self,
+        socket_path: Path,
+        token_path: Path,
+        client_id: str,
+        protocol_version: int = 1,
+    ):
+        if protocol_version not in (1, 2):
+            raise ValueError("protocol_version must be 1 or 2")
+        self.protocol_version = protocol_version
         self.connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.connection.settimeout(2.0)
         self.connection.connect(str(socket_path))
@@ -44,7 +53,7 @@ class ControlConnection:
             request(
                 self.connection,
                 {
-                    "version": 1,
+                    "version": self.protocol_version,
                     "action": "acquire",
                     "requestId": "acquire-1",
                     "clientId": client_id,
@@ -67,7 +76,7 @@ class ControlConnection:
             request(
                 self.connection,
                 {
-                    "version": 1,
+                    "version": self.protocol_version,
                     "action": "command",
                     "requestId": self._request_id("command"),
                     "sessionId": self.session_id,
@@ -84,7 +93,7 @@ class ControlConnection:
             request(
                 self.connection,
                 {
-                    "version": 1,
+                    "version": self.protocol_version,
                     "action": "heartbeat",
                     "requestId": self._request_id("heartbeat"),
                     "sessionId": self.session_id,
@@ -92,12 +101,29 @@ class ControlConnection:
             )
         )
 
+    def set_mode(self, mode: str) -> None:
+        if self.protocol_version != 2:
+            raise RuntimeError("set_mode requires protocol version 2")
+        require_ok(
+            request(
+                self.connection,
+                {
+                    "version": 2,
+                    "action": "set_mode",
+                    "requestId": self._request_id("mode"),
+                    "sessionId": self.session_id,
+                    "mode": mode,
+                },
+            )
+        )
+        emit("drive_mode_changed", mode=mode)
+
     def release(self) -> None:
         require_ok(
             request(
                 self.connection,
                 {
-                    "version": 1,
+                    "version": self.protocol_version,
                     "action": "release",
                     "requestId": self._request_id("release"),
                     "sessionId": self.session_id,

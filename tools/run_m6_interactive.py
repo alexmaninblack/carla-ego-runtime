@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one interactive M6.1 keyboard drive with a live terminal dashboard."""
+"""Run one interactive M6.2 live-handover drive with a VSS dashboard."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         "run_id": run_directory.name,
         "status": "starting",
         "started_at": M5.utc_now(),
-        "control_source": "keyboard_external_control",
+        "control_source": "live_manual_autopilot_handover",
         "configuration": config,
         "runtime_command": M5.public_runtime_options(runtime_command),
         "artifacts": {
@@ -161,7 +161,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     controller_exit: Optional[int] = None
     success = False
     try:
-        print("[1/6] Preparing the manual-drive vehicle...", flush=True)
+        print("[1/6] Preparing the live-handover vehicle...", flush=True)
         controller = M5.CapturedProcess(
             "external_controller", controller_command, log
         )
@@ -223,7 +223,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         wait_until_ready(keyboard, 10.0, "the keyboard-control window")
         timeline_mark(timeline_file, started_at, "keyboard_ready")
         print(
-            "[6/6] READY — press Enter in the control window, then use the arrows.",
+            "[6/6] READY — choose Manual Control or Autopilot in the control window.",
             flush=True,
         )
 
@@ -232,11 +232,11 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
                 keyboard.stop()
                 break
             if controller.process.poll() is not None:
-                raise RuntimeError("external controller stopped during manual drive")
+                raise RuntimeError("external controller stopped during live handover")
             if runtime.process.poll() is not None:
-                raise RuntimeError("telemetry runtime stopped during manual drive")
+                raise RuntimeError("telemetry runtime stopped during live handover")
             if dashboard.process.poll() is not None:
-                raise RuntimeError("VSS dashboard stopped during manual drive")
+                raise RuntimeError("VSS dashboard stopped during live handover")
         keyboard_exit = int(keyboard.process.returncode)
         timeline_mark(
             timeline_file,
@@ -280,7 +280,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         timeline_file.with_suffix(timeline_file.suffix + ".lock").unlink(
             missing_ok=True
         )
-        print("Manual-drive session stopped cleanly.", flush=True)
+        print("Live-handover session stopped cleanly.", flush=True)
         return success
     except (
         OSError,
@@ -298,7 +298,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         )
         M5.atomic_write_json(manifest_path, manifest)
         timeline_mark(timeline_file, started_at, "interactive_failed", error=str(error))
-        print(f"M6.1 interactive error: {error}", file=sys.stderr, flush=True)
+        print(f"M6.2 interactive error: {error}", file=sys.stderr, flush=True)
         return False
     finally:
         if keyboard is not None and keyboard.process.poll() is None:
@@ -310,7 +310,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         if controller is not None and controller.process.poll() is None:
             controller.stop()
         log.close()
-        print(f"M6.1 artifacts: {run_directory}", flush=True)
+        print(f"M6.2 artifacts: {run_directory}", flush=True)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -335,7 +335,7 @@ def main() -> int:
     try:
         config = CONTROLLER.load_config(arguments.config)
         if config["controller"]["type"] != "external_control":
-            raise ValueError("M6.1 requires controller.type=external_control")
+            raise ValueError("M6.2 requires controller.type=external_control")
         for path in (
             arguments.config,
             arguments.runtime,
@@ -350,7 +350,7 @@ def main() -> int:
                 raise ValueError(f"required path does not exist: {path}")
         return 0 if run(arguments, config) else 2
     except (OSError, ValueError) as error:
-        print(f"M6.1 configuration error: {error}", file=sys.stderr)
+        print(f"M6.2 configuration error: {error}", file=sys.stderr)
         return 2
 
 

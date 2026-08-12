@@ -52,8 +52,16 @@ class M61ToolTests(unittest.TestCase):
 
     def test_status_and_actions_use_centered_card_text(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
-        self.assertIn("centeredText(active ? reason", source)
+        self.assertIn("centeredText(statusDetail", source)
         self.assertIn("centeredText(title, in: rect", source)
+
+    def test_live_handover_ui_has_three_explicit_modes(self):
+        source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
+        self.assertIn('onMode?("manual")', source)
+        self.assertIn('onMode?("autopilot")', source)
+        self.assertIn('onMode?("safe_stop")', source)
+        self.assertIn('view.mode == "manual"', source)
+        self.assertIn("autopilot continues driving", source)
 
     def test_keyboard_configuration_is_external_and_operator_bounded(self):
         config = CONTROLLER.load_config(
@@ -64,6 +72,16 @@ class M61ToolTests(unittest.TestCase):
         self.assertEqual(external["command_timeout_seconds"], 0.25)
         self.assertEqual(external["ownership_timeout_seconds"], 1.0)
         self.assertEqual(external["maximum_session_seconds"], 3600)
+        self.assertNotIn("autopilot", config["controller"])
+
+    def test_live_handover_configuration_is_deterministic(self):
+        config = CONTROLLER.load_config(
+            REPOSITORY / "config" / "m6_2_town10hd_handover.json"
+        )
+        autopilot = config["controller"]["autopilot"]
+        self.assertEqual(autopilot["traffic_manager_port"], 8000)
+        self.assertEqual(autopilot["random_seed"], 42)
+        self.assertFalse(autopilot["automatic_lane_change"])
 
     def test_keyboard_command_uses_private_run_artifact_paths(self):
         arguments = type(
@@ -78,6 +96,13 @@ class M61ToolTests(unittest.TestCase):
         self.assertIn("keyboard_control_bridge.py", command[1])
         self.assertIn("run/control.sock", command[1])
         self.assertIn("run/control.token", command[1])
+
+    def test_bridge_discards_queued_manual_commands_after_a_mode_change(self):
+        source = (
+            REPOSITORY / "tools" / "keyboard_control_bridge.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('current_mode = "safe_stop"', source)
+        self.assertIn('elif current_mode == "manual":', source)
 
     def test_native_keyboard_app_paths_are_launcher_owned(self):
         source = (REPOSITORY / "tools" / "launch_m6_1.py").read_text()

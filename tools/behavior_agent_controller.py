@@ -113,6 +113,20 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 "ownership_timeout_seconds must exceed command_timeout_seconds"
             )
         _require_number(external_control, "maximum_session_seconds", 1.0, 86400.0)
+        autopilot = controller.get("autopilot")
+        if autopilot is not None:
+            if not isinstance(autopilot, dict):
+                raise ConfigurationError("controller.autopilot must be an object")
+            _require_integer(autopilot, "traffic_manager_port", 1, 65535)
+            _require_integer(autopilot, "random_seed", 0, 2147483647)
+            _require_number(autopilot, "speed_difference_percent", -100, 100)
+            if not isinstance(autopilot.get("automatic_lane_change"), bool):
+                raise ConfigurationError(
+                    "controller.autopilot.automatic_lane_change must be a boolean"
+                )
+            _require_number(autopilot, "maximum_road_distance_m", 0.1, 10)
+            _require_number(autopilot, "maximum_heading_error_degrees", 1, 90)
+            _require_number(autopilot, "manual_handover_seconds", 0.05, 2)
 
     carla_config = _require_object(config, "carla")
     _require_string(carla_config, "host")
