@@ -67,3 +67,11 @@ state. It must show one vehicle driving manually, continuing automatically
 after A or the Autopilot button, returning to responsive arrow-key control with
 M/Enter, and stopping with Space. VSS telemetry must remain connected and the
 final run manifest must report clean removal of the actor, socket, and token.
+
+This acceptance completed on the pinned Apple Silicon baseline on 2026-08-12.
+The operator accepted the live controls, automatic drive, and frame-locked
+camera visually. The final cold-start session reached its first VSS frame in
+26.5 seconds, maintained a measured 30.0 Hz average simulation rate, and ended
+with VISS `CONNECTED` and `LIVE`. The runtime, controller, and keyboard client
+all exited with code zero; safe stop was selected, ownership was released, and
+the per-run socket and token were removed.

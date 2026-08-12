@@ -157,13 +157,17 @@ controller is stopped with no owner, and its socket and token are removed.
   automatic-to-manual control transition.
 - [x] Extend the native panel with direct Manual Control, Autopilot, and Safe
   Stop actions while keeping VSS telemetry visible.
-- [ ] Complete the clean-start operator-observed handover and cleanup acceptance.
+- [x] Complete the clean-start operator-observed handover and cleanup acceptance.
 
 Exit criterion: one desktop session can switch repeatedly between manual and
 automatic driving without changing the actor or interrupting VISS, and every
 loss or exit path selects safe stop and cleans up owned resources.
 
-Status: implemented and under acceptance on the pinned Apple Silicon baseline.
+Status: satisfied on the pinned Apple Silicon baseline on 2026-08-12. The
+operator accepted manual/autopilot handover and the frame-locked chase camera
+after a clean desktop start. VISS remained connected and live at 30 Hz. The
+final run stopped in safe-stop mode with all component exit codes at zero, no
+controller owner, and no remaining control socket or token.
 
 ## Deferred
 
