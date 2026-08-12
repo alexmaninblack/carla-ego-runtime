@@ -17,6 +17,9 @@ struct RuntimeOptions {
   std::uint32_t run_seconds = 0;
   std::uint64_t max_frames = 1;
   double fixed_delta_seconds = 0.05;
+  double chase_camera_response = 10.0;
+  std::uint32_t chase_camera_update_hz = 60;
+  double exposure_offset = 0.0;
   double gnss_sensor_tick_seconds = 0.1;
   double gnss_max_age_seconds = 0.25;
   std::uint64_t log_every_frames = 1;

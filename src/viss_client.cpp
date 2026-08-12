@@ -3,15 +3,22 @@
 #include <boost/beast.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/websocket.hpp>
+#include <boost/json.hpp>
 
 #include <openssl/ssl.h>
 
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -22,9 +29,11 @@ namespace {
 namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
+namespace json = boost::json;
 namespace ssl = asio::ssl;
 namespace websocket = beast::websocket;
 using tcp = asio::ip::tcp;
+using SecureWebSocket = websocket::stream<beast::ssl_stream<beast::tcp_stream>>;
 
 struct Options {
   std::string host = "localhost";
@@ -32,20 +41,25 @@ struct Options {
   std::string ca_file;
   std::string request;
   std::size_t messages = 1;
+  std::uint32_t monitor_period_ms = 250;
+  bool monitor = false;
 };
 
 std::string Usage() {
-  return R"(Usage: carla-viss-client --ca FILE --request JSON [options]
+  return R"(Usage: carla-viss-client --ca FILE (--request JSON | --monitor) [options]
 
-Connect to a VISS 3.1 Secure WebSocket endpoint and print JSON messages.
+Connect to a VISS 3.1 Secure WebSocket endpoint. A request prints raw JSON;
+monitor mode continuously renders the basic vehicle signals as a dashboard.
 
 Options:
-  -h, --help          Show this help text
-      --host HOST     TLS host name (default: localhost)
-      --port PORT     Secure WebSocket port (default: 6443)
-      --ca FILE       Trusted PEM certificate or CA bundle (required)
-      --request JSON  One VISS request to send (required)
-      --messages N    Number of responses/events to read (default: 1)
+  -h, --help                Show this help text
+      --host HOST           TLS host name (default: localhost)
+      --port PORT           Secure WebSocket port (default: 6443)
+      --ca FILE             Trusted PEM certificate or CA bundle (required)
+      --request JSON        One VISS request to send
+      --messages N          Number of raw responses/events to read (default: 1)
+      --monitor             Show the live basic-telemetry dashboard until Ctrl-C
+      --monitor-period-ms N Dashboard refresh period (default: 250)
 )";
 }
 
@@ -87,16 +101,218 @@ Options Parse(const std::vector<std::string> &arguments) {
     } else if (argument == "--messages") {
       options.messages = ParseUnsigned<std::size_t>(
           RequireValue(arguments, index), "--messages");
+    } else if (argument == "--monitor") {
+      options.monitor = true;
+    } else if (argument == "--monitor-period-ms") {
+      options.monitor_period_ms = ParseUnsigned<std::uint32_t>(
+          RequireValue(arguments, index), "--monitor-period-ms");
     } else {
       throw std::invalid_argument("unknown option: " + argument);
     }
   }
-  if (options.host.empty() || options.ca_file.empty() ||
-      options.request.empty()) {
+  if (options.host.empty() || options.ca_file.empty()) {
     throw std::invalid_argument(
-        "--host must not be empty and --ca/--request are required");
+        "--host must not be empty and --ca is required");
+  }
+  if (options.monitor == !options.request.empty()) {
+    throw std::invalid_argument(
+        "choose exactly one of --request and --monitor");
+  }
+  if (options.monitor_period_ms < 50 || options.monitor_period_ms > 60000) {
+    throw std::invalid_argument(
+        "--monitor-period-ms must be between 50 and 60000");
   }
   return options;
+}
+
+std::string ReadMessage(SecureWebSocket &client) {
+  beast::flat_buffer buffer;
+  client.read(buffer);
+  return beast::buffers_to_string(buffer.data());
+}
+
+std::string AsString(const json::string &value) {
+  return {value.data(), value.size()};
+}
+
+std::string BuildMonitorRequest(std::uint32_t period_ms) {
+  json::array paths;
+  for (const auto *path : {
+           "Speed",
+           "Acceleration.*",
+           "Chassis.Accelerator.PedalPosition",
+           "Chassis.Brake.PedalPosition",
+           "Chassis.Axle.Row1.SteeringAngle",
+           "Powertrain.Transmission.CurrentGear",
+           "Powertrain.CombustionEngine.Speed",
+           "CurrentLocation.*",
+           "CarlaSimulation.FrameId",
+           "CarlaSimulation.SimulationTime",
+       }) {
+    paths.emplace_back(path);
+  }
+  json::object path_filter;
+  path_filter["variant"] = "paths";
+  path_filter["parameter"] = std::move(paths);
+  json::object period;
+  period["period"] = std::to_string(period_ms);
+  json::object time_filter;
+  time_filter["variant"] = "timebased";
+  time_filter["parameter"] = std::move(period);
+  json::array filters;
+  filters.emplace_back(std::move(path_filter));
+  filters.emplace_back(std::move(time_filter));
+  json::object request;
+  request["action"] = "subscribe";
+  request["path"] = "Vehicle";
+  request["filter"] = std::move(filters);
+  request["requestId"] = "carla-live-monitor";
+  return json::serialize(request);
+}
+
+using SignalValues = std::map<std::string, std::string>;
+
+void CollectDataPoint(const json::object &object, SignalValues &signals) {
+  const auto *path = object.if_contains("path");
+  const auto *dp = object.if_contains("dp");
+  if (path == nullptr || !path->is_string() || dp == nullptr ||
+      !dp->is_object()) {
+    return;
+  }
+  const auto *value = dp->as_object().if_contains("value");
+  if (value != nullptr && value->is_string()) {
+    signals[AsString(path->as_string())] = AsString(value->as_string());
+  }
+}
+
+void CollectData(const json::value &data, SignalValues &signals) {
+  if (data.is_object()) {
+    CollectDataPoint(data.as_object(), signals);
+  } else if (data.is_array()) {
+    for (const auto &item : data.as_array()) {
+      if (item.is_object()) {
+        CollectDataPoint(item.as_object(), signals);
+      }
+    }
+  }
+}
+
+std::string Value(const SignalValues &signals, std::string_view path,
+                  std::string fallback = "--") {
+  const auto iterator = signals.find(std::string(path));
+  return iterator == signals.end() ? std::move(fallback) : iterator->second;
+}
+
+std::optional<double> Number(const SignalValues &signals,
+                             std::string_view path) {
+  const auto iterator = signals.find(std::string(path));
+  if (iterator == signals.end()) {
+    return std::nullopt;
+  }
+  std::size_t consumed = 0;
+  try {
+    const auto value = std::stod(iterator->second, &consumed);
+    if (consumed == iterator->second.size() && std::isfinite(value)) {
+      return value;
+    }
+  } catch (const std::exception &) {
+  }
+  return std::nullopt;
+}
+
+std::string NumberText(const SignalValues &signals, std::string_view path,
+                       int precision) {
+  const auto value = Number(signals, path);
+  if (!value.has_value()) {
+    return "--";
+  }
+  std::ostringstream output;
+  output << std::fixed << std::setprecision(precision) << *value;
+  return output.str();
+}
+
+std::string Bar(const SignalValues &signals, std::string_view path) {
+  constexpr int width = 20;
+  const double percent =
+      std::clamp(Number(signals, path).value_or(0.0), 0.0, 100.0);
+  const int filled = static_cast<int>(std::lround(percent * width / 100.0));
+  return "[" + std::string(filled, '#') + std::string(width - filled, '.') +
+         "]";
+}
+
+void RenderDashboard(const Options &options, const SignalValues &signals,
+                     std::string_view updated_at) {
+  std::cout
+      << "\033[2J\033[H"
+      << "CARLA / VSS LIVE TELEMETRY\n"
+      << "===========================\n"
+      << "wss://" << options.host << ':' << options.port
+      << "   VISSv3   TLS verified\n\n"
+      << "Frame             "
+      << Value(signals, "Vehicle.CarlaSimulation.FrameId") << '\n'
+      << "Simulation time   "
+      << NumberText(signals, "Vehicle.CarlaSimulation.SimulationTime", 2)
+      << " s\n"
+      << "Speed             " << std::setw(8)
+      << NumberText(signals, "Vehicle.Speed", 1) << " km/h\n"
+      << "Acceleration      " << std::setw(8)
+      << NumberText(signals, "Vehicle.Acceleration.Longitudinal", 2)
+      << " m/s2 (longitudinal)\n"
+      << "Steering angle    " << std::setw(8)
+      << NumberText(signals, "Vehicle.Chassis.Axle.Row1.SteeringAngle", 1)
+      << " deg\n"
+      << "Gear              "
+      << Value(signals, "Vehicle.Powertrain.Transmission.CurrentGear") << '\n'
+      << "Engine            " << std::setw(8)
+      << NumberText(signals, "Vehicle.Powertrain.CombustionEngine.Speed", 0)
+      << " rpm\n\n"
+      << "Accelerator "
+      << Bar(signals, "Vehicle.Chassis.Accelerator.PedalPosition") << ' '
+      << std::setw(3)
+      << Value(signals, "Vehicle.Chassis.Accelerator.PedalPosition", "0")
+      << "%\n"
+      << "Brake       " << Bar(signals, "Vehicle.Chassis.Brake.PedalPosition")
+      << ' ' << std::setw(3)
+      << Value(signals, "Vehicle.Chassis.Brake.PedalPosition", "0") << "%\n\n"
+      << "GNSS latitude     "
+      << NumberText(signals, "Vehicle.CurrentLocation.Latitude", 6) << '\n'
+      << "GNSS longitude    "
+      << NumberText(signals, "Vehicle.CurrentLocation.Longitude", 6) << '\n'
+      << "GNSS altitude     "
+      << NumberText(signals, "Vehicle.CurrentLocation.Altitude", 1) << " m\n\n"
+      << "Last VISS event   " << updated_at << "\n"
+      << "Press Ctrl-C to stop the monitor.\n"
+      << std::flush;
+}
+
+void RunMonitor(SecureWebSocket &client, const Options &options) {
+  const auto request = BuildMonitorRequest(options.monitor_period_ms);
+  client.write(asio::buffer(request));
+  const auto response = json::parse(ReadMessage(client));
+  if (!response.is_object() ||
+      response.as_object().if_contains("subscriptionId") == nullptr) {
+    throw std::runtime_error("VISS subscription was rejected: " +
+                             json::serialize(response));
+  }
+
+  SignalValues signals;
+  while (true) {
+    const auto event = json::parse(ReadMessage(client));
+    if (!event.is_object()) {
+      continue;
+    }
+    const auto &object = event.as_object();
+    const auto *data = object.if_contains("data");
+    if (data != nullptr) {
+      CollectData(*data, signals);
+    }
+    std::string updated_at = "--";
+    if (const auto *timestamp = object.if_contains("ts");
+        timestamp != nullptr && timestamp->is_string()) {
+      updated_at = AsString(timestamp->as_string());
+    }
+    RenderDashboard(options, signals, updated_at);
+  }
 }
 
 int Run(const Options &options) {
@@ -106,8 +322,7 @@ int Run(const Options &options) {
   tls_context.load_verify_file(options.ca_file);
 
   tcp::resolver resolver(io_context);
-  websocket::stream<beast::ssl_stream<beast::tcp_stream>> client(io_context,
-                                                                 tls_context);
+  SecureWebSocket client(io_context, tls_context);
   const auto endpoints =
       resolver.resolve(options.host, std::to_string(options.port));
   beast::get_lowest_layer(client).connect(endpoints);
@@ -130,11 +345,13 @@ int Run(const Options &options) {
     throw std::runtime_error("server did not negotiate VISSv3");
   }
 
-  client.write(asio::buffer(options.request));
-  for (std::size_t index = 0; index < options.messages; ++index) {
-    beast::flat_buffer buffer;
-    client.read(buffer);
-    std::cout << beast::buffers_to_string(buffer.data()) << '\n';
+  if (options.monitor) {
+    RunMonitor(client, options);
+  } else {
+    client.write(asio::buffer(options.request));
+    for (std::size_t index = 0; index < options.messages; ++index) {
+      std::cout << ReadMessage(client) << '\n';
+    }
   }
   boost::system::error_code ignored;
   client.close(websocket::close_code::normal, ignored);

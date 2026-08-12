@@ -56,6 +56,11 @@ int main() {
   Check(!defaults.options.real_time, "real-time pacing disabled by default");
   Check(!defaults.options.autopilot, "autopilot disabled by default");
   Check(!defaults.options.chase_camera, "chase camera disabled by default");
+  Check(defaults.options.chase_camera_response == 10.0,
+        "default chase camera response");
+  Check(defaults.options.chase_camera_update_hz == 60,
+        "default chase camera update rate");
+  Check(defaults.options.exposure_offset == 0.0, "default exposure offset");
 
   const auto custom = ParseCommandLine({"--host",
                                         "carla.local",
@@ -100,6 +105,12 @@ int main() {
                                         "--real-time",
                                         "--autopilot",
                                         "--chase-camera",
+                                        "--chase-camera-response",
+                                        "8.5",
+                                        "--chase-camera-update-hz",
+                                        "90",
+                                        "--exposure-offset",
+                                        "-0.35",
                                         "--no-spawn",
                                         "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
@@ -136,6 +147,11 @@ int main() {
   Check(custom.options.real_time, "real-time pacing enabled");
   Check(custom.options.autopilot, "autopilot enabled");
   Check(custom.options.chase_camera, "chase camera enabled");
+  Check(custom.options.chase_camera_response == 8.5,
+        "custom chase camera response");
+  Check(custom.options.chase_camera_update_hz == 90,
+        "custom chase camera update rate");
+  Check(custom.options.exposure_offset == -0.35, "custom exposure offset");
 
   Check(ParseCommandLine({"--help"}).command == Command::kHelp, "help command");
   Check(ParseCommandLine({"--version"}).command == Command::kVersion,
@@ -168,6 +184,12 @@ int main() {
               "zero VISS port rejected");
   CheckThrows([] { ParseCommandLine({"--viss-max-clients", "0"}); },
               "zero VISS client cap rejected");
+  CheckThrows([] { ParseCommandLine({"--chase-camera-response", "0"}); },
+              "zero chase camera response rejected");
+  CheckThrows([] { ParseCommandLine({"--chase-camera-update-hz", "10"}); },
+              "low chase camera update rate rejected");
+  CheckThrows([] { ParseCommandLine({"--exposure-offset", "-6"}); },
+              "out-of-range exposure offset rejected");
 
   if (failures == 0) {
     std::cout << "runtime option tests passed\n";

@@ -119,6 +119,13 @@ Then use the separately built client to read a live signal:
   --request '{"action":"get","path":"Vehicle.Speed","requestId":"speed-1"}'
 ```
 
+Or open the continuously updating basic-telemetry dashboard:
+
+```sh
+./build-carla/carla-viss-client \
+  --host localhost --ca /private/path/trusted-ca.pem --monitor
+```
+
 Certificate and key files are ignored by Git and must not be committed.
 
 For a smooth visual M3 demonstration with one physics-driven ego vehicle and
@@ -131,14 +138,18 @@ GNSS, run:
   --real-time \
   --autopilot \
   --chase-camera \
+  --chase-camera-response 10 \
+  --chase-camera-update-hz 60 \
+  --exposure-offset -0.35 \
   --gnss-sensor-tick-seconds 0.1 \
   --gnss-max-age-seconds 0.25 \
   --log-every-frames 20
 ```
 
 This keeps the existing 20 Hz simulation step but paces it against wall-clock
-time. The vehicle is controlled by CARLA's Traffic Manager rather than by
-teleporting it between road positions.
+time. The chase camera interpolates independently at 60 Hz, and the exposure
+offset is restored to zero when the runtime exits. The vehicle is controlled by
+CARLA's Traffic Manager rather than by teleporting it between road positions.
 
 The CARLA server must already be listening on the configured RPC address. See
 the complete [native macOS setup and M4 runbook](docs/carla-setup-macos.md).

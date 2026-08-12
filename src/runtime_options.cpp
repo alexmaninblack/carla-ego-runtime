@@ -62,6 +62,31 @@ double ParsePositiveDouble(const std::string &text, std::string_view option) {
   return value;
 }
 
+double ParseFiniteDouble(const std::string &text, std::string_view option) {
+  std::size_t consumed = 0;
+  double value = 0.0;
+  try {
+    value = std::stod(text, &consumed);
+  } catch (const std::exception &) {
+    throw std::invalid_argument("invalid value for " + std::string(option) +
+                                ": " + text);
+  }
+  if (consumed != text.size() || !std::isfinite(value)) {
+    throw std::invalid_argument("invalid value for " + std::string(option) +
+                                ": " + text);
+  }
+  return value;
+}
+
+const std::string &RequireSignedValue(const std::vector<std::string> &arguments,
+                                      std::size_t &index) {
+  if (index + 1 >= arguments.size()) {
+    throw std::invalid_argument(arguments[index] + " requires a value");
+  }
+  ++index;
+  return arguments[index];
+}
+
 } // namespace
 
 ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
@@ -186,6 +211,29 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
       result.options.autopilot = true;
     } else if (argument == "--chase-camera") {
       result.options.chase_camera = true;
+    } else if (argument == "--chase-camera-response") {
+      result.options.chase_camera_response = ParsePositiveDouble(
+          RequireValue(arguments, index), "--chase-camera-response");
+      if (result.options.chase_camera_response > 100.0) {
+        throw std::invalid_argument(
+            "--chase-camera-response must be no greater than 100");
+      }
+    } else if (argument == "--chase-camera-update-hz") {
+      result.options.chase_camera_update_hz = ParseUnsigned<std::uint32_t>(
+          RequireValue(arguments, index), "--chase-camera-update-hz");
+      if (result.options.chase_camera_update_hz < 20 ||
+          result.options.chase_camera_update_hz > 240) {
+        throw std::invalid_argument(
+            "--chase-camera-update-hz must be between 20 and 240");
+      }
+    } else if (argument == "--exposure-offset") {
+      result.options.exposure_offset = ParseFiniteDouble(
+          RequireSignedValue(arguments, index), "--exposure-offset");
+      if (result.options.exposure_offset < -5.0 ||
+          result.options.exposure_offset > 5.0) {
+        throw std::invalid_argument(
+            "--exposure-offset must be between -5 and 5 EV");
+      }
     } else if (argument == "--no-spawn") {
       result.options.spawn_if_missing = false;
     } else if (argument == "--allow-version-mismatch") {
@@ -235,6 +283,12 @@ Options:
       --real-time               Pace owned ticks against the wall clock
       --autopilot               Drive the ego vehicle with Traffic Manager
       --chase-camera            Follow the ego vehicle with the spectator
+      --chase-camera-response N Camera smoothing response (default: 10;
+                                lower values are smoother but add more lag)
+      --chase-camera-update-hz N
+                                Camera interpolation rate (default: 60)
+      --exposure-offset EV      Unreal exposure compensation for this run
+                                (default: 0; restored on exit)
       --gnss-sensor-tick-seconds S
                                 GNSS measurement period (default: 0.1)
       --gnss-max-age-seconds S  Omit older retained GNSS fixes (default: 0.25)

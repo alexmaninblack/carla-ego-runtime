@@ -181,6 +181,9 @@ listed in the VISS profile.
 | `--real-time` | off | Pace owned ticks against wall-clock time |
 | `--autopilot` | off | Enable synchronous Traffic Manager control |
 | `--chase-camera` | off | Follow the ego vehicle with the spectator |
+| `--chase-camera-response` | `10` | Camera smoothing response; lower values are smoother but lag more |
+| `--chase-camera-update-hz` | `60` | Independent chase-camera interpolation rate |
+| `--exposure-offset` | `0` | Temporary Unreal exposure compensation in EV, restored on exit |
 | `--gnss-sensor-tick-seconds` | `0.1` | GNSS measurement period |
 | `--gnss-max-age-seconds` | `0.25` | Omit older retained GNSS fixes |
 | `--log-every-frames` | `1` | Print one sample summary every N frames |
@@ -193,6 +196,10 @@ listed in the VISS profile.
 | `--viss-max-subscriptions` | `16` | Subscription cap per client |
 | `--viss-max-pending-messages` | `8` | Outbound queue cap per client |
 | `--observe-ticks` | off | Wait for an external tick owner without changing world settings |
+
+For a visual live view of the VSS basic telemetry, run the bundled client with
+`--monitor` instead of `--request`. It creates a time-based VISS subscription
+and refreshes a compact terminal dashboard until Ctrl-C.
 
 The runtime tries every recommended map spawn point in deterministic order if
 the configured first point is occupied. It fails without changing the world if

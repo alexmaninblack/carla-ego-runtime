@@ -21,11 +21,13 @@
 #include <carla/geom/Location.h>
 #include <carla/geom/Rotation.h>
 #include <carla/geom/Transform.h>
+#include <carla/rpc/Command.h>
 #include <carla/sensor/SensorData.h>
 #include <carla/sensor/data/GnssMeasurement.h>
 #include <carla/trafficmanager/TrafficManager.h>
 
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <exception>
@@ -33,6 +35,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -353,6 +356,149 @@ carla::geom::Transform ChaseCameraTransform(const cc::Vehicle &vehicle) {
   return {location, rotation};
 }
 
+float InterpolateAngle(float current, float target, double factor) {
+  const auto delta = std::remainder(target - current, 360.0f);
+  return current + static_cast<float>(factor) * delta;
+}
+
+carla::geom::Transform
+InterpolateTransform(const carla::geom::Transform &current,
+                     const carla::geom::Transform &target, double factor) {
+  const auto interpolate = [factor](float from, float to) {
+    return from + static_cast<float>(factor) * (to - from);
+  };
+  carla::geom::Location location{
+      interpolate(current.location.x, target.location.x),
+      interpolate(current.location.y, target.location.y),
+      interpolate(current.location.z, target.location.z)};
+  carla::geom::Rotation rotation{
+      InterpolateAngle(current.rotation.pitch, target.rotation.pitch, factor),
+      InterpolateAngle(current.rotation.yaw, target.rotation.yaw, factor),
+      InterpolateAngle(current.rotation.roll, target.rotation.roll, factor)};
+  return {location, rotation};
+}
+
+class SmoothChaseCamera {
+public:
+  SmoothChaseCamera(carla::SharedPtr<cc::Actor> spectator,
+                    carla::geom::Transform initial_transform, double response,
+                    std::uint32_t update_hz)
+      : spectator_(std::move(spectator)), current_(initial_transform),
+        target_(initial_transform), response_(response),
+        period_(std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(1.0 / update_hz))) {
+    spectator_->SetTransform(initial_transform);
+    worker_ = std::jthread(
+        [this](const std::stop_token &stop_token) { Run(stop_token); });
+  }
+
+  SmoothChaseCamera(const SmoothChaseCamera &) = delete;
+  SmoothChaseCamera &operator=(const SmoothChaseCamera &) = delete;
+
+  ~SmoothChaseCamera() { Stop(); }
+
+  void SetTarget(carla::geom::Transform target) {
+    std::lock_guard lock(mutex_);
+    target_ = target;
+  }
+
+  void ThrowIfFailed() const {
+    std::lock_guard lock(mutex_);
+    if (failure_) {
+      std::rethrow_exception(failure_);
+    }
+  }
+
+  void Stop() noexcept {
+    if (worker_.joinable()) {
+      worker_.request_stop();
+      worker_.join();
+    }
+  }
+
+private:
+  void Run(const std::stop_token &stop_token) noexcept {
+    auto previous = std::chrono::steady_clock::now();
+    auto next_update = previous;
+    try {
+      while (!stop_token.stop_requested()) {
+        next_update += period_;
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed =
+            std::chrono::duration<double>(now - previous).count();
+        previous = now;
+
+        carla::geom::Transform target;
+        {
+          std::lock_guard lock(mutex_);
+          target = target_;
+        }
+        const double factor = 1.0 - std::exp(-response_ * elapsed);
+        current_ = InterpolateTransform(current_, target, factor);
+        spectator_->SetTransform(current_);
+        std::this_thread::sleep_until(next_update);
+      }
+    } catch (...) {
+      std::lock_guard lock(mutex_);
+      failure_ = std::current_exception();
+    }
+  }
+
+  carla::SharedPtr<cc::Actor> spectator_;
+  carla::geom::Transform current_;
+  carla::geom::Transform target_;
+  double response_;
+  std::chrono::steady_clock::duration period_;
+  mutable std::mutex mutex_;
+  std::exception_ptr failure_;
+  std::jthread worker_;
+};
+
+void RunConsoleCommand(cc::Client &client, const std::string &command) {
+  const auto responses =
+      client.ApplyBatchSync({carla::rpc::Command::ConsoleCommand(command)});
+  if (responses.size() != 1 || responses.front().HasError() ||
+      responses.front().Get() == 0) {
+    const auto detail = responses.size() == 1 && responses.front().HasError()
+                            ? ": " + responses.front().GetError().What()
+                            : std::string{};
+    throw std::runtime_error("Unreal console command failed" + detail);
+  }
+}
+
+class ExposureOffsetGuard {
+public:
+  ExposureOffsetGuard(cc::Client &client, double offset) : client_(&client) {
+    std::ostringstream command;
+    command << "r.ExposureOffset " << std::setprecision(4) << offset;
+    RunConsoleCommand(*client_, command.str());
+    std::cout << "Scene exposure offset: " << offset << " EV\n";
+  }
+
+  ExposureOffsetGuard(const ExposureOffsetGuard &) = delete;
+  ExposureOffsetGuard &operator=(const ExposureOffsetGuard &) = delete;
+
+  ~ExposureOffsetGuard() { RestoreNoThrow(); }
+
+  void Restore() {
+    if (client_) {
+      RunConsoleCommand(*client_, "r.ExposureOffset 0");
+      client_ = nullptr;
+    }
+  }
+
+private:
+  void RestoreNoThrow() noexcept {
+    try {
+      Restore();
+    } catch (const std::exception &error) {
+      std::cerr << "Failed to restore scene exposure: " << error.what() << '\n';
+    }
+  }
+
+  cc::Client *client_;
+};
+
 std::string FormatSensorTick(double seconds) {
   std::ostringstream output;
   output << std::setprecision(std::numeric_limits<double>::max_digits10)
@@ -453,14 +599,23 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     std::cout << "Traffic Manager autopilot: enabled (synchronous)\n";
   }
 
-  carla::SharedPtr<cc::Actor> spectator;
+  std::unique_ptr<SmoothChaseCamera> chase_camera;
   if (options.chase_camera) {
-    spectator = world.GetSpectator();
+    auto spectator = world.GetSpectator();
     if (!spectator) {
       throw std::runtime_error("CARLA returned no spectator actor");
     }
-    spectator->SetTransform(ChaseCameraTransform(*vehicle));
-    std::cout << "Chase camera: enabled\n";
+    chase_camera = std::make_unique<SmoothChaseCamera>(
+        std::move(spectator), ChaseCameraTransform(*vehicle),
+        options.chase_camera_response, options.chase_camera_update_hz);
+    std::cout << "Chase camera: smooth " << options.chase_camera_update_hz
+              << " Hz interpolation (response " << options.chase_camera_response
+              << ")\n";
+  }
+
+  std::optional<ExposureOffsetGuard> exposure_guard;
+  if (options.exposure_offset != 0.0) {
+    exposure_guard.emplace(client, options.exposure_offset);
   }
 
   ConfigureStopSignals();
@@ -552,8 +707,9 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
 #endif
     ++frame_count;
 
-    if (spectator) {
-      spectator->SetTransform(ChaseCameraTransform(*vehicle));
+    if (chase_camera) {
+      chase_camera->SetTarget(ChaseCameraTransform(*vehicle));
+      chase_camera->ThrowIfFailed();
     }
 
     if (frame_count == 1 || frame_count % options.log_every_frames == 0) {
@@ -587,11 +743,18 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
               << metrics.coalesced_subscription_intervals << '\n';
   }
 #endif
+  if (chase_camera) {
+    chase_camera->Stop();
+    chase_camera->ThrowIfFailed();
+  }
   if (!gnss_guard.Destroy()) {
     throw std::runtime_error("failed to destroy GNSS sensor");
   }
   if (traffic_manager_guard) {
     traffic_manager_guard->Restore();
+  }
+  if (exposure_guard) {
+    exposure_guard->Restore();
   }
   settings_guard.Restore();
 }
