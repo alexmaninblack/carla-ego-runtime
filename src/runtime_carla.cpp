@@ -12,6 +12,10 @@
 #include <carla/client/TimeoutException.h>
 #include <carla/client/Vehicle.h>
 #include <carla/client/World.h>
+#include <carla/geom/Location.h>
+#include <carla/geom/Rotation.h>
+#include <carla/geom/Transform.h>
+#include <carla/trafficmanager/TrafficManager.h>
 
 #include <chrono>
 #include <csignal>
@@ -24,6 +28,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace carla_ego_runtime {
@@ -126,6 +131,49 @@ class WorldSettingsGuard {
 
   cc::World &world_;
   carla::rpc::EpisodeSettings original_;
+  bool active_ = false;
+};
+
+class TrafficManagerGuard {
+ public:
+  TrafficManagerGuard(carla::traffic_manager::TrafficManager &traffic_manager,
+                      carla::SharedPtr<cc::Vehicle> vehicle)
+      : traffic_manager_(traffic_manager), vehicle_(std::move(vehicle)) {
+    traffic_manager_.SetSynchronousMode(true);
+    traffic_manager_.SetRandomDeviceSeed(42);
+    traffic_manager_.SetPercentageSpeedDifference(vehicle_, 35.0f);
+    vehicle_->SetAutopilot(true, traffic_manager_.Port());
+    active_ = true;
+  }
+
+  TrafficManagerGuard(const TrafficManagerGuard &) = delete;
+  TrafficManagerGuard &operator=(const TrafficManagerGuard &) = delete;
+
+  ~TrafficManagerGuard() { RestoreNoThrow(); }
+
+  void Restore() {
+    if (!active_) {
+      return;
+    }
+    vehicle_->SetAutopilot(false, traffic_manager_.Port());
+    traffic_manager_.SetSynchronousMode(false);
+    active_ = false;
+  }
+
+ private:
+  void RestoreNoThrow() noexcept {
+    try {
+      Restore();
+    } catch (const std::exception &error) {
+      std::cerr << "Failed to restore Traffic Manager state: " << error.what()
+                << '\n';
+    } catch (...) {
+      std::cerr << "Failed to restore Traffic Manager state: unknown error\n";
+    }
+  }
+
+  carla::traffic_manager::TrafficManager &traffic_manager_;
+  carla::SharedPtr<cc::Vehicle> vehicle_;
   bool active_ = false;
 };
 
@@ -242,6 +290,17 @@ bool ReachedStopCondition(const RuntimeOptions &options,
              started_at + std::chrono::seconds(options.run_seconds);
 }
 
+carla::geom::Transform ChaseCameraTransform(const cc::Vehicle &vehicle) {
+  const auto vehicle_transform = vehicle.GetTransform();
+  const auto forward = vehicle_transform.GetForwardVector();
+  carla::geom::Location location{
+      vehicle_transform.location.x - 8.0f * forward.x,
+      vehicle_transform.location.y - 8.0f * forward.y,
+      vehicle_transform.location.z + 3.5f};
+  carla::geom::Rotation rotation{-12.0f, vehicle_transform.rotation.yaw, 0.0f};
+  return {location, rotation};
+}
+
 CarlaVehicleSample CollectSample(
     const cc::WorldSnapshot &snapshot, cc::Vehicle &vehicle,
     const std::string &run_id, const SimulationClockAnchor &clock_anchor) {
@@ -278,7 +337,8 @@ CarlaVehicleSample CollectSample(
   return sample;
 }
 
-void CollectVehicleState(cc::World &world, cc::Vehicle &vehicle,
+void CollectVehicleState(cc::Client &client, cc::World &world,
+                         carla::SharedPtr<cc::Vehicle> vehicle,
                          const RuntimeOptions &options) {
   const auto timeout = std::chrono::milliseconds(options.timeout_ms);
   WorldSettingsGuard settings_guard(world);
@@ -290,14 +350,43 @@ void CollectVehicleState(cc::World &world, cc::Vehicle &vehicle,
     std::cout << "Synchronous tick owner: no (observing external ticks)\n";
   }
 
+  std::optional<carla::traffic_manager::TrafficManager> traffic_manager;
+  std::optional<TrafficManagerGuard> traffic_manager_guard;
+  if (options.autopilot) {
+    if (!options.tick_owner) {
+      throw std::invalid_argument(
+          "--autopilot requires this runtime to own simulation ticks");
+    }
+    traffic_manager.emplace(client.GetInstanceTM());
+    traffic_manager_guard.emplace(*traffic_manager, vehicle);
+    std::cout << "Traffic Manager autopilot: enabled (synchronous)\n";
+  }
+
+  carla::SharedPtr<cc::Actor> spectator;
+  if (options.chase_camera) {
+    spectator = world.GetSpectator();
+    if (!spectator) {
+      throw std::runtime_error("CARLA returned no spectator actor");
+    }
+    spectator->SetTransform(ChaseCameraTransform(*vehicle));
+    std::cout << "Chase camera: enabled\n";
+  }
+
   ConfigureStopSignals();
   const auto started_at = std::chrono::steady_clock::now();
   const auto run_id = GenerateRunId();
   std::optional<SimulationClockAnchor> clock_anchor;
   LatestVssSignalStore signal_store;
   std::uint64_t frame_count = 0;
+  auto next_tick_at = started_at;
 
   while (!ReachedStopCondition(options, frame_count, started_at)) {
+    if (options.tick_owner && options.real_time) {
+      next_tick_at += std::chrono::duration_cast<
+          std::chrono::steady_clock::duration>(
+          std::chrono::duration<double>(options.fixed_delta_seconds));
+      std::this_thread::sleep_until(next_tick_at);
+    }
     cc::WorldSnapshot snapshot = options.tick_owner
                                      ? (world.Tick(timeout), world.GetSnapshot())
                                      : world.WaitForTick(timeout);
@@ -308,7 +397,7 @@ void CollectVehicleState(cc::World &world, cc::Vehicle &vehicle,
     }
 
     const auto normalized = NormalizeVehicleSample(
-        CollectSample(snapshot, vehicle, run_id, *clock_anchor));
+        CollectSample(snapshot, *vehicle, run_id, *clock_anchor));
     auto vss_snapshot = ProjectToVss(normalized);
     if (!signal_store.Publish(std::move(vss_snapshot))) {
       throw std::runtime_error("duplicate or out-of-order CARLA frame " +
@@ -316,16 +405,26 @@ void CollectVehicleState(cc::World &world, cc::Vehicle &vehicle,
     }
     ++frame_count;
 
-    std::cout << "VSS frame=" << normalized.frame_id
-              << " simulation_time=" << normalized.simulation_time_s
-              << " timestamp=" << signal_store.Latest()->timestamp
-              << " speed_kmh=" << normalized.speed_mps * 3.6
-              << " points=" << signal_store.Latest()->data_points.size()
-              << '\n';
+    if (spectator) {
+      spectator->SetTransform(ChaseCameraTransform(*vehicle));
+    }
+
+    if (frame_count == 1 ||
+        frame_count % options.log_every_frames == 0) {
+      std::cout << "VSS frame=" << normalized.frame_id
+                << " simulation_time=" << normalized.simulation_time_s
+                << " timestamp=" << signal_store.Latest()->timestamp
+                << " speed_kmh=" << normalized.speed_mps * 3.6
+                << " points=" << signal_store.Latest()->data_points.size()
+                << '\n';
+    }
   }
 
   std::cout << "Published " << signal_store.publish_count()
             << " frame-aligned VSS state update(s); retained snapshots=1\n";
+  if (traffic_manager_guard) {
+    traffic_manager_guard->Restore();
+  }
   settings_guard.Restore();
 }
 
@@ -379,7 +478,7 @@ int RunRuntime(const RuntimeOptions &options) {
               << " type=" << ego_vehicle->GetTypeId()
               << " role_name=" << options.role_name << '\n';
 
-    CollectVehicleState(world, *ego_vehicle, options);
+    CollectVehicleState(client, world, ego_vehicle, options);
 
     if (owned_actor && !owned_actor->Destroy()) {
       return 4;

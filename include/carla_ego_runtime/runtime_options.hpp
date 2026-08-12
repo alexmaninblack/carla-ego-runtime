@@ -17,9 +17,13 @@ struct RuntimeOptions {
   std::uint32_t run_seconds = 0;
   std::uint64_t max_frames = 1;
   double fixed_delta_seconds = 0.05;
+  std::uint64_t log_every_frames = 1;
   bool tick_owner = true;
   bool spawn_if_missing = true;
   bool require_matching_versions = true;
+  bool real_time = false;
+  bool autopilot = false;
+  bool chase_camera = false;
 };
 
 enum class Command {

@@ -39,16 +39,21 @@ int main() {
   Check(defaults.options.role_name == "hero", "default role");
   Check(defaults.options.max_frames == 1, "one telemetry frame by default");
   Check(defaults.options.fixed_delta_seconds == 0.05, "default fixed delta");
+  Check(defaults.options.log_every_frames == 1, "log every frame by default");
   Check(defaults.options.tick_owner, "tick ownership enabled by default");
   Check(defaults.options.spawn_if_missing, "spawning enabled by default");
   Check(defaults.options.require_matching_versions,
         "version match required by default");
+  Check(!defaults.options.real_time, "real-time pacing disabled by default");
+  Check(!defaults.options.autopilot, "autopilot disabled by default");
+  Check(!defaults.options.chase_camera, "chase camera disabled by default");
 
   const auto custom = ParseCommandLine(
       {"--host", "carla.local", "--port", "2100", "--timeout-ms", "5000",
        "--role-name", "ego", "--blueprint", "vehicle.tesla.model3",
        "--spawn-point-index", "7", "--run-seconds", "15", "--max-frames",
-       "42", "--fixed-delta-seconds", "0.1", "--observe-ticks",
+       "42", "--fixed-delta-seconds", "0.1", "--log-every-frames", "10",
+       "--observe-ticks", "--real-time", "--autopilot", "--chase-camera",
        "--no-spawn", "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
   Check(custom.options.port == 2100, "custom port");
@@ -60,9 +65,13 @@ int main() {
   Check(custom.options.run_seconds == 15, "custom run duration");
   Check(custom.options.max_frames == 42, "custom frame limit");
   Check(custom.options.fixed_delta_seconds == 0.1, "custom fixed delta");
+  Check(custom.options.log_every_frames == 10, "custom log interval");
   Check(!custom.options.tick_owner, "observer mode");
   Check(!custom.options.spawn_if_missing, "spawning disabled");
   Check(!custom.options.require_matching_versions, "version mismatch allowed");
+  Check(custom.options.real_time, "real-time pacing enabled");
+  Check(custom.options.autopilot, "autopilot enabled");
+  Check(custom.options.chase_camera, "chase camera enabled");
 
   Check(ParseCommandLine({"--help"}).command == Command::kHelp, "help command");
   Check(ParseCommandLine({"--version"}).command == Command::kVersion,
@@ -83,6 +92,8 @@ int main() {
               "zero fixed delta rejected");
   CheckThrows([] { ParseCommandLine({"--fixed-delta-seconds", "1.1"}); },
               "oversized fixed delta rejected");
+  CheckThrows([] { ParseCommandLine({"--log-every-frames", "0"}); },
+              "zero log interval rejected");
 
   if (failures == 0) {
     std::cout << "runtime option tests passed\n";

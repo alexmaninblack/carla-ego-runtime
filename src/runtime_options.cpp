@@ -111,8 +111,21 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
         throw std::invalid_argument(
             "--fixed-delta-seconds must be no greater than 1.0");
       }
+    } else if (argument == "--log-every-frames") {
+      result.options.log_every_frames = ParseUnsigned<std::uint64_t>(
+          RequireValue(arguments, index), "--log-every-frames");
+      if (result.options.log_every_frames == 0) {
+        throw std::invalid_argument(
+            "--log-every-frames must be greater than zero");
+      }
     } else if (argument == "--observe-ticks") {
       result.options.tick_owner = false;
+    } else if (argument == "--real-time") {
+      result.options.real_time = true;
+    } else if (argument == "--autopilot") {
+      result.options.autopilot = true;
+    } else if (argument == "--chase-camera") {
+      result.options.chase_camera = true;
     } else if (argument == "--no-spawn") {
       result.options.spawn_if_missing = false;
     } else if (argument == "--allow-version-mismatch") {
@@ -153,6 +166,11 @@ Options:
       --run-seconds N           Maximum wall-clock run time (default: 0,
                                 no time limit)
       --fixed-delta-seconds S   Synchronous simulation step (default: 0.05)
+      --real-time               Pace owned ticks against the wall clock
+      --autopilot               Drive the ego vehicle with Traffic Manager
+      --chase-camera            Follow the ego vehicle with the spectator
+      --log-every-frames N      Print one sample summary every N frames
+                                (default: 1)
       --observe-ticks           Do not own or advance the simulation clock;
                                 wait for another designated tick owner
 )";
