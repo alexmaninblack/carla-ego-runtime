@@ -21,6 +21,7 @@ CONTROLLER = load_module(
 )
 RUNNER = load_module("m5_runner_tested", REPOSITORY / "tools" / "run_m5.py")
 LAUNCHER = load_module("m5_launcher_tested", REPOSITORY / "tools" / "launch_m5.py")
+M6_RUNNER = load_module("m6_runner_tested", REPOSITORY / "tools" / "run_m6.py")
 
 
 class M5ToolTests(unittest.TestCase):
@@ -38,6 +39,40 @@ class M5ToolTests(unittest.TestCase):
         )
         self.assertEqual(self.config["runtime"]["log_every_frames"], 30)
         self.assertEqual(self.config["runtime"]["dashboard_period_ms"], 250)
+
+    def test_checked_in_m6_configuration_is_safe_and_bounded(self):
+        m6 = CONTROLLER.load_config(
+            REPOSITORY / "config" / "m6_town10hd_external_control.json"
+        )
+        external = m6["controller"]["external_control"]
+        self.assertEqual(m6["controller"]["type"], "external_control")
+        self.assertLess(
+            external["command_timeout_seconds"],
+            external["ownership_timeout_seconds"],
+        )
+        self.assertLessEqual(external["command_timeout_seconds"], 0.25)
+        self.assertLessEqual(external["maximum_session_seconds"], 60)
+
+    def test_m6_motion_acceptance_requires_movement_and_final_stop(self):
+        accepted = {
+            "motion": {
+                "total_distance_m": 12.0,
+                "maximum_speed_kmh": 18.0,
+                "current_speed_kmh": 0.1,
+            }
+        }
+        self.assertTrue(M6_RUNNER.motion_is_verified(accepted))
+        accepted["motion"]["current_speed_kmh"] = 2.0
+        self.assertFalse(M6_RUNNER.motion_is_verified(accepted))
+        accepted["motion"]["current_speed_kmh"] = 0.1
+        accepted["motion"]["total_distance_m"] = 1.0
+        self.assertFalse(M6_RUNNER.motion_is_verified(accepted))
+
+    def test_behavior_agent_controller_refuses_external_control_live_mode(self):
+        source = (REPOSITORY / "tools" / "behavior_agent_controller.py").read_text()
+        self.assertIn(
+            "controller.type must be behavior_agent for this controller", source
+        )
 
     def test_behavior_agent_pid_uses_the_physics_interval(self):
         options = CONTROLLER.behavior_agent_options(self.config)
@@ -60,7 +95,9 @@ class M5ToolTests(unittest.TestCase):
     def test_invalid_control_source_is_rejected(self):
         invalid = json.loads(json.dumps(self.config))
         invalid["controller"]["type"] = "implicit"
-        with self.assertRaisesRegex(CONTROLLER.ConfigurationError, "behavior_agent"):
+        with self.assertRaisesRegex(
+            CONTROLLER.ConfigurationError, "behavior_agent or external_control"
+        ):
             CONTROLLER.validate_config(invalid)
 
     def test_route_requires_at_least_one_destination(self):

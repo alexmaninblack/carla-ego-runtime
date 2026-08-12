@@ -109,21 +109,27 @@ sequence all completed with clean resource restoration.
 
 ## M6 — External vehicle control
 
-- [ ] Define a versioned control contract for throttle, brake, and steering.
-- [ ] Preserve BehaviorAgent as a selectable fallback control source.
-- [ ] Add controller ownership, command sequence, and heartbeat semantics.
-- [ ] Apply a safe stop when commands expire or the external controller
+- [x] Define a versioned control contract for throttle, brake, and steering.
+- [x] Preserve BehaviorAgent as a separately selectable control source.
+- [x] Add controller ownership, command sequence, and heartbeat semantics.
+- [x] Apply a safe stop when commands expire or the external controller
   disconnects.
-- [ ] Demonstrate an independent client taking and releasing vehicle control
+- [x] Demonstrate an independent client taking and releasing vehicle control
   while VISS telemetry remains continuous.
 
 Exit criterion: an authenticated local client can explicitly acquire control,
 drive the ego vehicle, and release it; stale or lost commands always produce a
 bounded safe stop without breaking telemetry or CARLA cleanup.
 
+Status: satisfied on the pinned Apple Silicon baseline. The acceptance client
+drove the vehicle, triggered and recovered from the 250 ms command deadline,
+released ownership, and then verified disconnect safe stop with continuous
+30 Hz telemetry. A bounded visual run, two clean restarts, motion measurement,
+and actor/socket cleanup are recorded in private per-run artifacts.
+
 ## Deferred
 
-Cameras, LiDAR, radar, ultrasonic modelling, packaged macOS distribution, and
-packaged macOS distribution are separate future milestones. ROS 2 may be added
+Cameras, LiDAR, radar, ultrasonic modelling, and packaged macOS distribution
+are separate future milestones. ROS 2 may be added
 as an optional adapter only when a concrete ROS-based consumer or tool is in
 scope; it is not part of the core CARLA-to-VISS path.

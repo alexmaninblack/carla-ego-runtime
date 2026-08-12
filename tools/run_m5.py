@@ -700,6 +700,8 @@ def main() -> int:
     arguments = parse_arguments()
     try:
         config = CONTROLLER.load_config(arguments.config)
+        if config["controller"]["type"] != "behavior_agent":
+            raise ValueError("M5 runner requires controller.type=behavior_agent")
         if arguments.validate_only:
             print(f"M5 configuration is valid: {arguments.config}")
             return 0

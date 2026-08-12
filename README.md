@@ -6,9 +6,10 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
 > [!IMPORTANT]
-> The local M5 path is implemented. A replaceable BehaviorAgent control source
-> owns a repeatable route and synchronous clock while the C++ runtime observes
-> every frame and exposes telemetry through a TLS-only VISS 3.1 endpoint.
+> The local M6 path is implemented. Either the routed BehaviorAgent or an
+> authenticated external-control process owns the ego vehicle and synchronous
+> clock while the C++ runtime observes every frame and exposes telemetry through
+> a TLS-only VISS 3.1 endpoint.
 > Binding outside loopback remains an explicit deployment and security step.
 
 ## Current capabilities
@@ -35,11 +36,14 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   coalescing metrics;
 - a small independent TLS VISS client for acceptance tests;
 - a dependency-free build mode for CLI tests and documentation CI;
-- a native build mode against an installed `Carla::carla-client` package.
+- a native build mode against an installed `Carla::carla-client` package;
 - a deterministic `Town10HD_Opt` BehaviorAgent route with a replaceable
-  process boundary for future control sources;
+  process boundary shared by the selectable M6 external-control source;
 - validated M5 JSON configuration, structured event logs, redacted run
-  manifests, independent VISS probes, and restart testing.
+  manifests, independent VISS probes, and restart testing;
+- an authenticated local M6 control contract with exclusive ownership,
+  monotonic command sequences, independent command/ownership deadlines, and
+  full-brake safe stop on timeout, release, disconnect, or shutdown.
 
 Run `carla-ego-runtime --help` for all connection and vehicle options.
 
@@ -62,10 +66,10 @@ over a [COVESA VSS 6.0](https://github.com/COVESA/vehicle_signal_specification/t
 signal tree. The initial network profile uses JSON over Secure WebSocket and
 supports reading and subscribing to telemetry.
 
-Cameras, LiDAR, radar, ultrasonic modelling, and external autonomous control
-are out of scope for the first telemetry milestone. ROS 2 is not a runtime
-dependency; a ROS 2 adapter may be added later for consumers that already use
-that ecosystem.
+Cameras, LiDAR, radar, and ultrasonic modelling remain deferred. M6 adds a
+separate local external-control channel while deliberately keeping VISS
+read-only. ROS 2 is not a runtime dependency; a ROS 2 adapter may be added
+later for consumers that already use that ecosystem.
 
 ## Repository boundaries
 
@@ -171,6 +175,12 @@ owned-process cleanup after route completion, failure, or Ctrl-C. Local machine
 paths belong in the desktop wrapper or launch command and are not committed to
 this public repository.
 
+M6 adds an independent local client that can explicitly acquire and release
+vehicle control. The control socket is not VISS: it is a private Unix-domain
+channel with a fresh per-run token, and its fail-safe action is zero throttle,
+full brake, and centred steering. See
+[M6 external-control operations and acceptance](docs/m6-operations.md).
+
 ## Documentation
 
 - [Native CARLA setup on macOS](docs/carla-setup-macos.md)
@@ -180,6 +190,8 @@ this public repository.
 - [Role of ROS 2](docs/ros2-role.md)
 - [Roadmap](docs/roadmap.md)
 - [M5 operations and acceptance](docs/m5-operations.md)
+- [External-control contract](docs/external-control-contract.md)
+- [M6 external-control operations and acceptance](docs/m6-operations.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies and licences](THIRD_PARTY.md)

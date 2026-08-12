@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 ALLOWED_BEHAVIORS = {"cautious", "normal", "aggressive"}
+ALLOWED_CONTROLLERS = {"behavior_agent", "external_control"}
 STOP_REQUESTED = False
 
 
@@ -88,13 +89,30 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ConfigurationError("schema_version must be 1")
 
     controller = _require_object(config, "controller")
-    if _require_string(controller, "type") != "behavior_agent":
-        raise ConfigurationError("controller.type must be behavior_agent")
-    behavior = _require_string(controller, "behavior")
-    if behavior not in ALLOWED_BEHAVIORS:
+    controller_type = _require_string(controller, "type")
+    if controller_type not in ALLOWED_CONTROLLERS:
         raise ConfigurationError(
-            "controller.behavior must be cautious, normal, or aggressive"
+            "controller.type must be behavior_agent or external_control"
         )
+    if controller_type == "behavior_agent":
+        behavior = _require_string(controller, "behavior")
+        if behavior not in ALLOWED_BEHAVIORS:
+            raise ConfigurationError(
+                "controller.behavior must be cautious, normal, or aggressive"
+            )
+    else:
+        external_control = _require_object(controller, "external_control")
+        command_timeout = _require_number(
+            external_control, "command_timeout_seconds", 0.05, 5.0
+        )
+        ownership_timeout = _require_number(
+            external_control, "ownership_timeout_seconds", 0.1, 30.0
+        )
+        if ownership_timeout <= command_timeout:
+            raise ConfigurationError(
+                "ownership_timeout_seconds must exceed command_timeout_seconds"
+            )
+        _require_number(external_control, "maximum_session_seconds", 1.0, 86400.0)
 
     carla_config = _require_object(config, "carla")
     _require_string(carla_config, "host")
@@ -503,6 +521,10 @@ def main() -> int:
         if arguments.validate_only:
             emit("configuration_valid", config=str(arguments.config))
             return 0
+        if config["controller"]["type"] != "behavior_agent":
+            raise ConfigurationError(
+                "controller.type must be behavior_agent for this controller"
+            )
         if arguments.python_api_root is None:
             raise ConfigurationError("--python-api-root is required for a live run")
         signal.signal(signal.SIGINT, request_stop)

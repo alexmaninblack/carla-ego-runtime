@@ -17,7 +17,9 @@ flowchart LR
         N -. "Optional future adapter" .-> ROS["ROS 2"]
     end
     C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| K
-    A["Replaceable control source<br/>BehaviorAgent in M5"] -->|"Vehicle control and simulation ticks"| C
+    B["BehaviorAgent route<br/>M5/M5.1"] -->|"Selectable tick owner"| C
+    ECTL["Independent M6 client"] -->|"Authenticated local socket"| XCTL["External-control tick owner"]
+    XCTL -->|"Vehicle control and simulation ticks"| C
     S -->|"JSON over WSS: Read and Subscribe"| E["VISS clients"]
     ROS -.-> X["Autoware, RViz, rosbag, ROS nodes"]
 ```
@@ -43,9 +45,12 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
    overlay.
 7. **VISS server** — exposes the signal tree using the project VISS 3.1
    compatibility profile.
-8. **Control source** — owns the synchronous clock and ego vehicle for routed
-   M5 runs; the C++ telemetry runtime observes its ticks and does not own its
-   actor. See [ADR 0008](decisions/0008-replaceable-external-control-source.md).
+8. **Control source** — either the BehaviorAgent route process or the M6
+   external-control process owns the synchronous clock and ego vehicle; the C++
+   telemetry runtime observes its ticks and does not own its actor. The sources
+   are selected explicitly and never run together. See
+   [ADR 0008](decisions/0008-replaceable-external-control-source.md) and
+   [ADR 0009](decisions/0009-local-external-control-channel.md).
 
 ## VISS boundary
 
@@ -66,6 +71,11 @@ error for read-only nodes; it must not silently invent actuator semantics. The
 implemented profile and its network test suite are an M4 deliverable; broader
 VISS features remain outside that documented conformance claim.
 
+M6 does not turn VISS into an actuator interface. Vehicle commands use the
+separate authenticated local contract described in
+[External control contract v1](external-control-contract.md), so telemetry
+consumers cannot accidentally acquire actuator ownership.
+
 The endpoint is embedded with Boost.Beast/Asio and OpenSSL. The decision and
 comparison with the COVESA reference implementation are recorded in
 [ADR 0007](decisions/0007-embedded-viss-endpoint.md); it does not change the
@@ -75,9 +85,10 @@ public interface.
 
 - C++20 is used because the installed native LibCarla package requires it on
   the target Apple Silicon machine.
-- The runtime is the designated synchronous tick owner by default and uses a
-  0.05 second fixed delta (20 simulation frames per second). Observer mode is
-  explicit and requires a different client to own the clock.
+- The standalone runtime is the designated synchronous tick owner by default
+  and uses a 0.05 second fixed delta (20 simulation frames per second). Observer
+  mode is explicit; the routed M5/M5.1 and external-control M6 processes instead
+  own the clock at their configured 30 Hz cadence.
 - Vehicle state is sampled every simulation frame; GNSS initially runs at
   10 Hz.
 - CARLA's internal RPC and streaming protocol is not the public contract.
