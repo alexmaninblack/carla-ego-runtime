@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -29,6 +32,7 @@ TOOLS = Path(__file__).resolve().parent
 M5 = load_module("m6_runner_m5", TOOLS / "run_m5.py")
 CONTROLLER = load_module("m6_runner_config", TOOLS / "behavior_agent_controller.py")
 STOP_REQUESTED = False
+PORTABLE_UNIX_SOCKET_PATH_MAX = 103
 
 
 def motion_is_verified(status: Optional[Dict[str, Any]]) -> bool:
@@ -85,6 +89,18 @@ def client_command(
     ]
 
 
+def create_control_paths() -> tuple[Path, Path, Path]:
+    control_directory = Path(tempfile.mkdtemp(prefix="carla-m6-"))
+    control_directory.chmod(0o700)
+    socket_file = control_directory / "control.sock"
+    if len(os.fsencode(socket_file)) > PORTABLE_UNIX_SOCKET_PATH_MAX:
+        shutil.rmtree(control_directory, ignore_errors=True)
+        raise RuntimeError(
+            "local control socket path exceeds the portable Unix-domain limit"
+        )
+    return control_directory, socket_file, control_directory / "control.token"
+
+
 def run_once(
     arguments: argparse.Namespace, config: Dict[str, Any], sequence: int
 ) -> bool:
@@ -96,8 +112,7 @@ def run_once(
     status_file = run_directory / "controller-status.json"
     gate_file = run_directory / "start.gate"
     stop_file = run_directory / "stop.gate"
-    socket_file = run_directory / "control.sock"
-    token_file = run_directory / "control.token"
+    control_directory, socket_file, token_file = create_control_paths()
     manifest_path = run_directory / "manifest.json"
     log = M5.StructuredLog(run_directory / "events.jsonl")
     started_at = time.monotonic()
@@ -305,6 +320,7 @@ def run_once(
         if controller is not None and controller.process.poll() is None:
             controller.stop()
         log.close()
+        shutil.rmtree(control_directory, ignore_errors=True)
         print(f"M6 run artifacts: {run_directory}", flush=True)
 
 

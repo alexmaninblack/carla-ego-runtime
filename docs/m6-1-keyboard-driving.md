@@ -57,6 +57,11 @@ wall-clock time from the desktop launch through:
 - keyboard-window readiness;
 - session finish and verified cleanup.
 
+The authenticated socket and token are intentionally kept in a separate short
+owner-only temporary directory. macOS limits Unix-domain socket path length,
+so placing them under a long Application Support artifact path is not safe.
+The launcher removes this temporary directory during session cleanup.
+
 ## Acceptance
 
 Automated acceptance requires the existing M6 protocol suite, M6.1 launcher

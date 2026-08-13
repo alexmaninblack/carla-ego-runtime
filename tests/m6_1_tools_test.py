@@ -26,6 +26,7 @@ RUNNER = load_module(
 LAUNCHER = load_module(
     "m61_launcher_tested", REPOSITORY / "tools" / "launch_m6_1.py"
 )
+M6_RUNNER = load_module("m6_acceptance_tested", REPOSITORY / "tools" / "run_m6.py")
 
 
 class M61ToolTests(unittest.TestCase):
@@ -152,9 +153,42 @@ class M61ToolTests(unittest.TestCase):
                 ["launcher", "orchestrator"],
             )
 
+    def test_control_socket_uses_a_short_private_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control_directory = Path(directory) / "c"
+            socket_file, token_file = RUNNER.control_paths(control_directory)
+            self.assertEqual(socket_file, control_directory / "control.sock")
+            self.assertEqual(token_file, control_directory / "control.token")
+            self.assertEqual(control_directory.stat().st_mode & 0o777, 0o700)
+            self.assertLessEqual(
+                len(os.fsencode(socket_file)),
+                RUNNER.PORTABLE_UNIX_SOCKET_PATH_MAX,
+            )
+
+    def test_control_socket_rejects_an_overlong_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control_directory = Path(directory) / ("x" * 90)
+            with self.assertRaisesRegex(ValueError, "Unix-domain limit"):
+                RUNNER.control_paths(control_directory)
+
+    def test_m6_acceptance_uses_a_short_private_runtime_directory(self):
+        control_directory, socket_file, token_file = M6_RUNNER.create_control_paths()
+        try:
+            self.assertEqual(socket_file, control_directory / "control.sock")
+            self.assertEqual(token_file, control_directory / "control.token")
+            self.assertEqual(control_directory.stat().st_mode & 0o777, 0o700)
+            self.assertLessEqual(
+                len(os.fsencode(socket_file)),
+                M6_RUNNER.PORTABLE_UNIX_SOCKET_PATH_MAX,
+            )
+        finally:
+            M6_RUNNER.shutil.rmtree(control_directory, ignore_errors=True)
+
     def test_manual_cleanup_requires_stopped_owner_and_removed_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             run_directory = Path(directory)
+            control_directory = run_directory / "control"
+            control_directory.mkdir()
             RUNNER.M5.atomic_write_json(
                 run_directory / "controller-status.json",
                 {
@@ -162,9 +196,17 @@ class M61ToolTests(unittest.TestCase):
                     "control": {"session_active": False, "owner": None},
                 },
             )
-            self.assertTrue(LAUNCHER.manual_run_cleanup_is_valid(run_directory))
-            (run_directory / "control.token").write_text("secret")
-            self.assertFalse(LAUNCHER.manual_run_cleanup_is_valid(run_directory))
+            self.assertTrue(
+                LAUNCHER.manual_run_cleanup_is_valid(
+                    run_directory, control_directory
+                )
+            )
+            (control_directory / "control.token").write_text("secret")
+            self.assertFalse(
+                LAUNCHER.manual_run_cleanup_is_valid(
+                    run_directory, control_directory
+                )
+            )
 
 
 if __name__ == "__main__":

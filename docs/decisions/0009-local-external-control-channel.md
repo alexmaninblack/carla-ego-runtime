@@ -22,9 +22,10 @@ the ego vehicle, applies commands, and advances the 30 Hz CARLA simulation. The
 existing C++ runtime remains a non-owning telemetry observer.
 
 An independent local client connects through a Unix-domain stream socket. The
-socket and token file are created inside the private run directory with owner-
-only permissions and are removed during cleanup. Each JSON-lines message uses
-control contract version 1.
+socket and token file are created in a short per-run temporary directory with
+owner-only permissions and are removed during cleanup. This avoids the small
+Unix-domain path limit when durable run artifacts use a descriptive path.
+Each JSON-lines message uses control contract version 1.
 
 The protocol has four actions:
 

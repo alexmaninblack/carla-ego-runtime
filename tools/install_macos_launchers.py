@@ -237,7 +237,7 @@ def app_info(display_name: str, bundle_identifier: str) -> dict[str, object]:
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": display_name,
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.9.1",
+        "CFBundleShortVersionString": "0.9.2",
         "CFBundleVersion": "1",
         "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,

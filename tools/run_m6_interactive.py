@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import importlib.util
 import json
+import os
 import shlex
 import signal
 import subprocess
@@ -31,6 +32,7 @@ TOOLS = Path(__file__).resolve().parent
 M5 = load_module("m61_runner_m5", TOOLS / "run_m5.py")
 CONTROLLER = load_module("m61_runner_config", TOOLS / "behavior_agent_controller.py")
 STOP_REQUESTED = threading.Event()
+PORTABLE_UNIX_SOCKET_PATH_MAX = 103
 
 
 def request_stop(_signum: int, _frame: Any) -> None:
@@ -94,6 +96,17 @@ def keyboard_command(
     ]
 
 
+def control_paths(control_directory: Path) -> tuple[Path, Path]:
+    control_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    control_directory.chmod(0o700)
+    socket_file = control_directory / "control.sock"
+    if len(os.fsencode(socket_file)) > PORTABLE_UNIX_SOCKET_PATH_MAX:
+        raise ValueError(
+            "local control socket path exceeds the portable Unix-domain limit"
+        )
+    return socket_file, control_directory / "control.token"
+
+
 def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     run_directory = arguments.run_directory
     run_directory.mkdir(parents=True, exist_ok=True)
@@ -101,8 +114,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     M5.atomic_write_json(effective_config, config)
     status_file = run_directory / "controller-status.json"
     gate_file = run_directory / "start.gate"
-    socket_file = run_directory / "control.sock"
-    token_file = run_directory / "control.token"
+    socket_file, token_file = control_paths(arguments.control_directory)
     timeline_file = run_directory / "startup-timeline.json"
     manifest_path = run_directory / "manifest.json"
     if manifest_path.exists():
@@ -324,6 +336,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--private-key", required=True, type=Path)
     parser.add_argument("--keyboard-ui", required=True, type=Path)
     parser.add_argument("--run-directory", required=True, type=Path)
+    parser.add_argument("--control-directory", required=True, type=Path)
     parser.add_argument("--started-timestamp", required=True, type=float)
     return parser.parse_args()
 

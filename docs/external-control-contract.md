@@ -3,10 +3,12 @@
 ## Transport and access
 
 The M6 development profile uses newline-delimited JSON over a Unix-domain
-stream socket. The socket and per-run token file have owner-only access. Every
-request contains `version`, `action`, and a unique `requestId`. Every response
-repeats those fields, adds an ISO 8601 UTC `ts`, and contains either
-`status: "ok"` or a structured `error`.
+stream socket. The socket and per-run token file are placed in a short,
+owner-only temporary runtime directory because Unix-domain paths have a small
+platform limit. Durable manifests and logs remain in the private run-artifact
+directory. Every request contains `version`, `action`, and a unique
+`requestId`. Every response repeats those fields, adds an ISO 8601 UTC `ts`,
+and contains either `status: "ok"` or a structured `error`.
 
 Version 2 adds explicit live drive modes. The server continues to accept
 version 1 clients: acquiring a v1 session selects the legacy manual mode, and

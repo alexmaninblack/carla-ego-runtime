@@ -54,6 +54,9 @@ cadence avoids the resulting long frames.
   require meaningless manual commands.
 - Only one authenticated local client can own control.
 - VISS stays read-only and carries telemetry, not actuator commands.
+- The local socket and token use a short owner-only temporary runtime directory
+  and are removed at shutdown; durable artifacts remain under the configured
+  run root.
 
 ## Acceptance
 
@@ -75,3 +78,12 @@ camera visually. The final cold-start session reached its first VSS frame in
 with VISS `CONNECTED` and `LIVE`. The runtime, controller, and keyboard client
 all exited with code zero; safe stop was selected, ownership was released, and
 the per-run socket and token were removed.
+
+A desktop-packaging regression was reproduced and closed on 2026-08-13. Moving
+durable run artifacts below `Application Support` made the original per-run
+Unix-domain socket path exceed the macOS limit. The socket and token now use a
+short owner-only temporary directory while manifests and logs keep their
+descriptive durable path. A clean Desktop cold start reached keyboard readiness
+in 34.7 seconds, held VISS `CONNECTED`/`LIVE` and 30.0 Hz simulation cadence,
+then exited with all component codes zero and no remaining control directory or
+process.

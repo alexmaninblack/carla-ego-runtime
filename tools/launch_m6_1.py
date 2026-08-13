@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -62,7 +63,10 @@ def timeline_mark(path: Path, started_at: float, stage: str, **fields: Any) -> N
 
 
 def orchestrator_command(
-    arguments: argparse.Namespace, run_directory: Path, started_at: float
+    arguments: argparse.Namespace,
+    run_directory: Path,
+    control_directory: Path,
+    started_at: float,
 ) -> list[str]:
     return [
         str(arguments.python),
@@ -85,6 +89,8 @@ def orchestrator_command(
         str(arguments.keyboard_ui),
         "--run-directory",
         str(run_directory),
+        "--control-directory",
+        str(control_directory),
         "--started-timestamp",
         str(started_at),
     ]
@@ -150,7 +156,9 @@ def build_keyboard_app(arguments: argparse.Namespace) -> Path:
     return executable
 
 
-def manual_run_cleanup_is_valid(run_directory: Path) -> bool:
+def manual_run_cleanup_is_valid(
+    run_directory: Path, control_directory: Path
+) -> bool:
     status = M5.read_json(run_directory / "controller-status.json")
     if status is None or status.get("state") != "stopped":
         return False
@@ -158,8 +166,8 @@ def manual_run_cleanup_is_valid(run_directory: Path) -> bool:
     return (
         not control.get("session_active", True)
         and control.get("owner") is None
-        and not (run_directory / "control.sock").exists()
-        and not (run_directory / "control.token").exists()
+        and not (control_directory / "control.sock").exists()
+        and not (control_directory / "control.token").exists()
     )
 
 
@@ -185,6 +193,8 @@ def run(arguments: argparse.Namespace) -> int:
     timeline_mark(timeline_file, started_at, "launcher_started")
     arguments.keyboard_ui = build_keyboard_app(arguments)
     timeline_mark(timeline_file, started_at, "keyboard_app_ready")
+    control_directory = Path(tempfile.mkdtemp(prefix="carla-m6-"))
+    control_directory.chmod(0o700)
 
     lock = BASE.SessionLock(arguments.run_root / ".m6_2-session.lock")
     simulator: Optional[subprocess.Popen[str]] = None
@@ -239,7 +249,12 @@ def run(arguments: argparse.Namespace) -> int:
         print(f"[3/5] CARLA RPC ready on {map_name}.", flush=True)
         print("[4/5] Starting vehicle, telemetry, dashboard, and keyboard...", flush=True)
         orchestrator = subprocess.Popen(
-            orchestrator_command(arguments, run_directory, started_at),
+            orchestrator_command(
+                arguments,
+                run_directory,
+                control_directory,
+                started_at,
+            ),
             text=True,
             start_new_session=True,
         )
@@ -256,7 +271,7 @@ def run(arguments: argparse.Namespace) -> int:
             exit_code=int(orchestrator.returncode),
         )
         if orchestrator.returncode == 0 and not manual_run_cleanup_is_valid(
-            run_directory
+            run_directory, control_directory
         ):
             raise RuntimeError("live-handover cleanup verification failed")
         if orchestrator.returncode == 0:
@@ -276,6 +291,7 @@ def run(arguments: argparse.Namespace) -> int:
         if simulator_log is not None:
             simulator_log.close()
         lock.release()
+        shutil.rmtree(control_directory, ignore_errors=True)
         timeline_mark(timeline_file, started_at, "launcher_cleanup_complete")
         timeline_file.with_suffix(timeline_file.suffix + ".lock").unlink(
             missing_ok=True
