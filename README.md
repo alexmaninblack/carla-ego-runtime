@@ -197,6 +197,9 @@ owner remain active through every handover, while the terminal VSS dashboard
 continues to show live telemetry. See
 [M6.2 live handover](docs/m6-2-live-handover.md).
 
+For reproducible signed Desktop applications that start the accepted M5 and
+M6.2 workflows, see [macOS desktop launchers](docs/macos-launchers.md).
+
 ## Documentation
 
 - [Native CARLA setup on macOS](docs/carla-setup-macos.md)
@@ -210,6 +213,7 @@ continues to show live telemetry. See
 - [M6 external-control operations and acceptance](docs/m6-operations.md)
 - [M6.1 keyboard driving](docs/m6-1-keyboard-driving.md)
 - [M6.2 live handover](docs/m6-2-live-handover.md)
+- [macOS desktop launchers](docs/macos-launchers.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies and licences](THIRD_PARTY.md)

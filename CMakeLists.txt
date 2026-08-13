@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   carla_ego_runtime
-  VERSION 0.9.0
+  VERSION 0.9.1
   DESCRIPTION "Native runtime and telemetry gateway for a CARLA ego vehicle"
   LANGUAGES CXX
 )
@@ -242,6 +242,12 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/product_language_test.py"
     )
     if(APPLE)
+      add_test(
+        NAME macos_launcher_installer
+        COMMAND
+          "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/macos_launcher_installer_test.py"
+      )
       add_test(
         NAME keyboard_control_native
         COMMAND ${CMAKE_COMMAND} -E env
