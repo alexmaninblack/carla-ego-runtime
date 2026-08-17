@@ -23,6 +23,13 @@ The panel starts in safe stop. Focus loss selects safe stop only while manual
 mode is active, because the operator is then the active command source. It does
 not stop an intentionally selected autopilot demonstration.
 
+Protocol version 3 is a backward-compatible extension used by the hybrid
+Brake Event profile. When that capability is configured, the same panel adds a
+fourth **Start/Restart Scripted Scenario** action and the S key. Re-entering
+that mode resets the scenario-owned vehicle state; changing to Manual aborts
+only the current scripted attempt while the actor, clock, VISS session, camera,
+and dashboard continue.
+
 ## Handover implementation
 
 The external-control process is the only owner of the ego actor and synchronous
@@ -64,6 +71,9 @@ Automated acceptance covers protocol v1 compatibility, all v2 transitions,
 idempotent selections, monotonic command sequencing across modes, disconnect
 safe stop, lane/alignment gating, pedal-safe handover blending, configuration
 validation, product language, and native Swift type checking.
+Version 3 acceptance additionally covers advertised capabilities, scenario
+restart generations, controller-originated completion safe stop, and rejection
+of scenario mode when it is not configured.
 
 The operator-observed acceptance uses the desktop shortcut from a clean CARLA
 state. It must show one vehicle driving manually, continuing automatically

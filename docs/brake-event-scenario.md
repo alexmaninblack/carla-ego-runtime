@@ -9,8 +9,8 @@ This workflow creates a visible, repeatable braking event for the Brake Health
 demonstration while changing only the simulated vehicle side:
 
 - CARLA renders the city, ego vehicle, stationary obstacle, and physical stop;
-- `brake_event_scenario.py` is the sole synchronous simulation-clock and ego
-  control owner;
+- the interactive workflow reuses `external_control_controller.py` as the sole
+  synchronous simulation-clock and ego-control owner;
 - `carla-ego-runtime` observes the same frames, exposes VISS telemetry, and
   drives the chase camera;
 - the engineering dashboard shows vehicle motion, pedals, and live four-wheel
@@ -45,6 +45,29 @@ The obstacle exists before motion starts. Nothing is teleported into the ego
 vehicle's path during the controlled segment. Lane-branch selection is stable:
 the controller prefers forward-heading continuity and uses road/lane metadata
 as deterministic tie-breakers.
+
+## Interactive and qualification profiles
+
+`CARLA Brake Event.app` uses
+`config/brake_event_hybrid_town10hd.json`. The M6.2 native panel offers:
+
+- **Start/Restart Scripted Scenario** or S;
+- **Manual Control** or M/Enter with arrow-key control;
+- **Autopilot** or A;
+- **Safe Stop** or Space;
+- session cleanup through Escape or closing the panel.
+
+All modes keep the same ego actor, VISS endpoint, dashboard, camera, and tick
+owner. Selecting Manual during a scripted attempt records `ABORTED`; it does
+not produce a misleading automatic `PASS` or `FAIL`. Selecting the scripted
+mode again resets the ego state and starts a new attempt. A completed attempt
+selects safe stop but keeps the session alive so the operator can restart it or
+continue manually.
+
+`config/brake_event_town10hd.json` and `launch_brake_event_demo.py` remain the
+unattended qualification profile. They run exactly one scripted attempt,
+record its acceptance result, clean up, and optionally suppress dashboard
+rendering with `--dashboard-quiet`.
 
 ## Engineering telemetry
 
@@ -83,12 +106,13 @@ multiple times with a strict reset between runs.
 ## Operator command
 
 The macOS launcher installer creates `CARLA Brake Event.app`. Opening it starts
-the simulator and keeps the expanded engineering dashboard visible in its
-Terminal window. `--dashboard-quiet` is reserved for unattended acceptance
-runs where the same dashboard health is verified without visual rendering.
+the hybrid session, native control panel, and expanded engineering dashboard in
+Terminal. Closing the panel cleans the session. CARLA is also closed when that
+session started it; a simulator that was already running is deliberately left
+open and can be closed with Command-Q.
 
-Use the same native runtime, CARLA Python environment, and loopback TLS material
-as the existing M6.2 launcher:
+For an unattended single-run qualification, use the same native runtime, CARLA
+Python environment, and loopback TLS material as the existing M6.2 launcher:
 
 ```sh
 python tools/launch_brake_event_demo.py \

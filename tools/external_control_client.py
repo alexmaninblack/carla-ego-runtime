@@ -42,8 +42,8 @@ class ControlConnection:
         client_id: str,
         protocol_version: int = 1,
     ):
-        if protocol_version not in (1, 2):
-            raise ValueError("protocol_version must be 1 or 2")
+        if protocol_version not in (1, 2, 3):
+            raise ValueError("protocol_version must be 1, 2, or 3")
         self.protocol_version = protocol_version
         self.connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.connection.settimeout(2.0)
@@ -62,6 +62,9 @@ class ControlConnection:
             )
         )
         self.session_id = str(acquired["sessionId"])
+        self.available_modes = [
+            str(mode) for mode in acquired.get("availableModes", [])
+        ]
         self.sequence = 0
         self.request_sequence = 1
         emit("control_acquired", client_id=client_id)
@@ -88,8 +91,8 @@ class ControlConnection:
             )
         )
 
-    def heartbeat(self) -> None:
-        require_ok(
+    def heartbeat(self) -> Dict[str, Any]:
+        return require_ok(
             request(
                 self.connection,
                 {
@@ -102,13 +105,13 @@ class ControlConnection:
         )
 
     def set_mode(self, mode: str) -> None:
-        if self.protocol_version != 2:
-            raise RuntimeError("set_mode requires protocol version 2")
+        if self.protocol_version < 2:
+            raise RuntimeError("set_mode requires protocol version 2 or 3")
         require_ok(
             request(
                 self.connection,
                 {
-                    "version": 2,
+                    "version": self.protocol_version,
                     "action": "set_mode",
                     "requestId": self._request_id("mode"),
                     "sessionId": self.session_id,

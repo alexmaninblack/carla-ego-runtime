@@ -88,6 +88,35 @@ def _require_number(
     return value
 
 
+def _validate_brake_scenario(scenario: Dict[str, Any]) -> None:
+    _require_string(scenario, "id")
+    _require_number(scenario, "target_speed_kmh", 5, 80)
+    _require_number(scenario, "target_speed_tolerance_kmh", 0.1, 10)
+    _require_number(scenario, "acceleration_throttle", 0.05, 1)
+    _require_number(scenario, "speed_control_gain", 0.001, 0.5)
+    _require_number(scenario, "lookahead_distance_m", 2, 30)
+    _require_number(scenario, "maximum_steering", 0.05, 1)
+    _require_number(scenario, "stabilization_seconds", 0.1, 10)
+    _require_number(scenario, "brake_trigger_gap_m", 2, 50)
+    _require_number(scenario, "brake_command", 0.1, 1)
+    _require_number(scenario, "stopped_speed_kmh", 0.01, 2)
+    _require_integer(scenario, "stopped_frames", 2, 300)
+    _require_number(scenario, "hold_seconds", 0.1, 30)
+    _require_number(scenario, "minimum_stop_gap_m", 0.1, 30)
+    _require_number(scenario, "maximum_stop_gap_m", 0.2, 100)
+    if scenario["maximum_stop_gap_m"] <= scenario["minimum_stop_gap_m"]:
+        raise ConfigurationError(
+            "maximum_stop_gap_m must exceed minimum_stop_gap_m"
+        )
+    _require_number(scenario, "minimum_peak_deceleration_mps2", 0.1, 20)
+    _require_number(scenario, "maximum_duration_seconds", 5, 300)
+    obstacle = _require_object(scenario, "obstacle")
+    _require_string(obstacle, "blueprint")
+    _require_string(obstacle, "role_name")
+    _require_number(obstacle, "distance_m", 20, 500)
+    _require_number(obstacle, "spawn_height_m", 0, 3)
+
+
 def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     if config.get("schema_version") != 1:
         raise ConfigurationError("schema_version must be 1")
@@ -118,6 +147,10 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
                 "ownership_timeout_seconds must exceed command_timeout_seconds"
             )
         _require_number(external_control, "maximum_session_seconds", 1.0, 86400.0)
+        if "manual_handover_seconds" in external_control:
+            _require_number(
+                external_control, "manual_handover_seconds", 0.05, 2.0
+            )
         autopilot = controller.get("autopilot")
         if autopilot is not None:
             if not isinstance(autopilot, dict):
@@ -132,34 +165,14 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
             _require_number(autopilot, "maximum_road_distance_m", 0.1, 10)
             _require_number(autopilot, "maximum_heading_error_degrees", 1, 90)
             _require_number(autopilot, "manual_handover_seconds", 0.05, 2)
+        scenario = controller.get("scenario")
+        if scenario is not None:
+            if not isinstance(scenario, dict):
+                raise ConfigurationError("controller.scenario must be an object")
+            _validate_brake_scenario(scenario)
     else:
         scenario = _require_object(controller, "scenario")
-        _require_string(scenario, "id")
-        _require_number(scenario, "target_speed_kmh", 5, 80)
-        _require_number(scenario, "target_speed_tolerance_kmh", 0.1, 10)
-        _require_number(scenario, "acceleration_throttle", 0.05, 1)
-        _require_number(scenario, "speed_control_gain", 0.001, 0.5)
-        _require_number(scenario, "lookahead_distance_m", 2, 30)
-        _require_number(scenario, "maximum_steering", 0.05, 1)
-        _require_number(scenario, "stabilization_seconds", 0.1, 10)
-        _require_number(scenario, "brake_trigger_gap_m", 2, 50)
-        _require_number(scenario, "brake_command", 0.1, 1)
-        _require_number(scenario, "stopped_speed_kmh", 0.01, 2)
-        _require_integer(scenario, "stopped_frames", 2, 300)
-        _require_number(scenario, "hold_seconds", 0.1, 30)
-        _require_number(scenario, "minimum_stop_gap_m", 0.1, 30)
-        _require_number(scenario, "maximum_stop_gap_m", 0.2, 100)
-        if scenario["maximum_stop_gap_m"] <= scenario["minimum_stop_gap_m"]:
-            raise ConfigurationError(
-                "maximum_stop_gap_m must exceed minimum_stop_gap_m"
-            )
-        _require_number(scenario, "minimum_peak_deceleration_mps2", 0.1, 20)
-        _require_number(scenario, "maximum_duration_seconds", 5, 300)
-        obstacle = _require_object(scenario, "obstacle")
-        _require_string(obstacle, "blueprint")
-        _require_string(obstacle, "role_name")
-        _require_number(obstacle, "distance_m", 20, 500)
-        _require_number(obstacle, "spawn_height_m", 0, 3)
+        _validate_brake_scenario(scenario)
 
     carla_config = _require_object(config, "carla")
     _require_string(carla_config, "host")

@@ -169,6 +169,25 @@ after a clean desktop start. VISS remained connected and live at 30 Hz. The
 final run stopped in safe-stop mode with all component exit codes at zero, no
 controller owner, and no remaining control socket or token.
 
+## M6.3 — Hybrid brake-event and manual handover
+
+- [x] Reuse the M6.2 controller as the only vehicle and synchronous tick owner.
+- [x] Add a restartable scripted stationary-obstacle mode to protocol version 3
+  while retaining version 1 and 2 compatibility.
+- [x] Keep the actor, VISS stream, camera, dashboard, and collision sensor alive
+  while switching among scripted, manual, autopilot, and safe stop.
+- [x] Record manual takeover of an active scripted attempt as `ABORTED`.
+- [x] Return a completed scripted attempt to safe stop without ending the
+  interactive session.
+- [x] Preserve the standalone one-run qualification launcher.
+
+Exit criterion: one Brake Event session can be interrupted for manual braking,
+restarted, completed automatically, and cleaned without replacing the ego
+actor or interrupting engineering telemetry.
+
+Status: complete. Implementation, automated live handover acceptance, and
+operator-observed UI acceptance passed on the pinned Apple Silicon baseline.
+
 ## Deferred
 
 Cameras, LiDAR, radar, ultrasonic modelling, and packaged macOS distribution

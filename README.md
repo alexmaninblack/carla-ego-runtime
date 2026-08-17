@@ -204,6 +204,11 @@ owner remain active through every handover, while the terminal VSS dashboard
 continues to show live telemetry. See
 [M6.2 live handover](docs/m6-2-live-handover.md).
 
+The hybrid brake-event profile reuses that same M6.2 tick owner, authenticated
+control channel, native panel, and uninterrupted VISS session. It adds a
+restartable Scripted Scenario mode; switching to Manual marks the current
+scripted attempt `ABORTED` without replacing the vehicle or dashboard.
+
 For the CARLA-only obstacle and braking-event workflow, see
 [deterministic brake-event scenario](docs/brake-event-scenario.md). This path
 does not require AosEdge, KUKSA, a vehicle-data provider, or Cloud access.

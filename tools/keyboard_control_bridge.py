@@ -39,9 +39,9 @@ def main() -> int:
             arguments.socket,
             arguments.token,
             arguments.client_id,
-            protocol_version=2,
+            protocol_version=3,
         )
-        emit("bridge_ready")
+        emit("bridge_ready", available_modes=connection.available_modes)
         selector = selectors.DefaultSelector()
         selector.register(sys.stdin, selectors.EVENT_READ)
         next_heartbeat = time.monotonic() + 0.2
@@ -75,7 +75,15 @@ def main() -> int:
                         float(value["steering"]),
                     )
             if time.monotonic() >= next_heartbeat and not exiting:
-                connection.heartbeat()
+                heartbeat = connection.heartbeat()
+                server_mode = str(heartbeat.get("mode", current_mode))
+                if server_mode != current_mode:
+                    current_mode = server_mode
+                    emit(
+                        "mode_changed",
+                        mode=server_mode,
+                        reason=str(heartbeat.get("reason", "")),
+                    )
                 next_heartbeat = time.monotonic() + 0.2
         try:
             connection.set_mode("safe_stop")

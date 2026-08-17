@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 
-CONTRACT_VERSION = 2
-SUPPORTED_VERSIONS = {1, 2}
-DRIVE_MODES = {"safe_stop", "manual", "autopilot"}
+CONTRACT_VERSION = 3
+SUPPORTED_VERSIONS = {1, 2, 3}
+DRIVE_MODES = {"safe_stop", "manual", "autopilot", "scenario"}
+DEFAULT_AVAILABLE_MODES = {"safe_stop", "manual", "autopilot"}
 MAX_MESSAGE_BYTES = 16 * 1024
 SAFE_CONTROL = {"throttle": 0.0, "brake": 1.0, "steering": 0.0}
 
@@ -47,6 +48,7 @@ class AppliedControl:
     safe_stop: bool
     reason: str
     mode: str
+    mode_generation: int
 
 
 def _number(value: Any, name: str, minimum: float, maximum: float) -> float:
@@ -75,6 +77,7 @@ class ExternalControlState:
         ownership_timeout_seconds: float,
         event_sink: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         mode_validator: Optional[Callable[[str], Optional[str]]] = None,
+        available_modes: Optional[set[str]] = None,
     ):
         if not token:
             raise ValueError("token must not be empty")
@@ -87,6 +90,12 @@ class ExternalControlState:
         self._ownership_timeout = ownership_timeout_seconds
         self._event_sink = event_sink
         self._mode_validator = mode_validator
+        self._available_modes = set(
+            DEFAULT_AVAILABLE_MODES if available_modes is None else available_modes
+        )
+        self._available_modes.add("safe_stop")
+        if not self._available_modes.issubset(DRIVE_MODES):
+            raise ValueError("available modes contain an unsupported mode")
         self._lock = threading.Lock()
         self._session_id: Optional[str] = None
         self._client_id: Optional[str] = None
@@ -96,6 +105,7 @@ class ExternalControlState:
         self._command = dict(SAFE_CONTROL)
         self._safe_stop_reason = "startup"
         self._mode = "safe_stop"
+        self._mode_generation = 0
         self._metrics: Dict[str, int] = {
             "acquisitions": 0,
             "commands": 0,
@@ -108,6 +118,7 @@ class ExternalControlState:
             "mode_changes": 0,
             "manual_activations": 0,
             "autopilot_activations": 0,
+            "scenario_activations": 0,
         }
 
     def _event(self, event: str, **fields: Any) -> None:
@@ -150,7 +161,7 @@ class ExternalControlState:
     ) -> Dict[str, Any]:
         version = message.get("version")
         if version not in SUPPORTED_VERSIONS:
-            raise ControlProtocolError("bad_request", "version must be 1 or 2")
+            raise ControlProtocolError("bad_request", "version must be 1, 2, or 3")
         action = _string(message, "action")
         _string(message, "requestId")
 
@@ -174,7 +185,11 @@ class ExternalControlState:
                 self._select_safe_stop("acquired")
             self._metrics["acquisitions"] += 1
             self._event("control_acquired", client_id=client_id)
-            return {"status": "ok", "sessionId": self._session_id}
+            return {
+                "status": "ok",
+                "sessionId": self._session_id,
+                "availableModes": sorted(self._available_modes),
+            }
 
         if action == "command":
             self._require_session(message)
@@ -211,25 +226,35 @@ class ExternalControlState:
             return {"status": "ok", "sequence": sequence}
 
         if action == "set_mode":
-            if version != 2:
+            if version < 2:
                 raise ControlProtocolError(
-                    "bad_request", "set_mode requires protocol version 2"
+                    "bad_request", "set_mode requires protocol version 2 or 3"
                 )
             self._require_session(message)
             mode = _string(message, "mode")
             if mode not in DRIVE_MODES:
                 raise ControlProtocolError(
-                    "invalid_mode", "mode must be safe_stop, manual, or autopilot"
+                    "invalid_mode",
+                    "mode must be safe_stop, manual, autopilot, or scenario",
+                )
+            if mode not in self._available_modes:
+                raise ControlProtocolError(
+                    "mode_unavailable", f"{mode} mode is not configured"
                 )
             previous_mode = self._mode
-            if mode == previous_mode:
+            if mode == previous_mode and mode != "scenario":
                 self._last_heartbeat_at = now
-                return {"status": "ok", "mode": mode}
+                return {
+                    "status": "ok",
+                    "mode": mode,
+                    "modeGeneration": self._mode_generation,
+                }
             if self._mode_validator is not None:
                 unavailable = self._mode_validator(mode)
                 if unavailable is not None:
                     raise ControlProtocolError("mode_unavailable", unavailable)
             self._mode = mode
+            self._mode_generation += 1
             self._last_heartbeat_at = now
             if mode == "manual":
                 self._select_safe_stop("awaiting_command")
@@ -239,6 +264,11 @@ class ExternalControlState:
                 self._last_command_at = None
                 self._safe_stop_reason = "autopilot"
                 self._metrics["autopilot_activations"] += 1
+            elif mode == "scenario":
+                self._command = dict(SAFE_CONTROL)
+                self._last_command_at = None
+                self._safe_stop_reason = "scenario"
+                self._metrics["scenario_activations"] += 1
             else:
                 self._select_safe_stop("operator_stop")
             self._metrics["mode_changes"] += 1
@@ -248,13 +278,22 @@ class ExternalControlState:
                 mode=mode,
                 client_id=self._client_id,
             )
-            return {"status": "ok", "mode": mode}
+            return {
+                "status": "ok",
+                "mode": mode,
+                "modeGeneration": self._mode_generation,
+            }
 
         if action == "heartbeat":
             self._require_session(message)
             self._last_heartbeat_at = now
             self._metrics["heartbeats"] += 1
-            return {"status": "ok"}
+            return {
+                "status": "ok",
+                "mode": self._mode,
+                "modeGeneration": self._mode_generation,
+                "reason": self._safe_stop_reason,
+            }
 
         if action == "release":
             self._require_session(message)
@@ -300,6 +339,24 @@ class ExternalControlState:
                 ),
                 reason=self._safe_stop_reason,
                 mode=self._mode,
+                mode_generation=self._mode_generation,
+            )
+
+    def force_safe_stop(self, reason: str) -> None:
+        if not reason:
+            raise ValueError("safe-stop reason must not be empty")
+        with self._lock:
+            previous_mode = self._mode
+            self._mode = "safe_stop"
+            self._mode_generation += 1
+            self._select_safe_stop(reason)
+            self._metrics["mode_changes"] += 1
+            self._event(
+                "drive_mode_changed",
+                previous_mode=previous_mode,
+                mode="safe_stop",
+                reason=reason,
+                client_id=self._client_id,
             )
 
     def snapshot(self) -> Dict[str, Any]:
@@ -310,6 +367,8 @@ class ExternalControlState:
                 "last_sequence": self._last_sequence,
                 "safe_stop_reason": self._safe_stop_reason,
                 "mode": self._mode,
+                "mode_generation": self._mode_generation,
+                "available_modes": sorted(self._available_modes),
                 **self._metrics,
             }
 

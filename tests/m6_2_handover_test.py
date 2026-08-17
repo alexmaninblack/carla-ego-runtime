@@ -72,6 +72,9 @@ class Carla:
             self.brake = brake
             self.steer = steer
 
+    class Vector3D(Vector):
+        pass
+
 
 class HandoverTests(unittest.TestCase):
     def test_manual_handover_blends_without_overlapping_pedals(self):
@@ -132,6 +135,13 @@ class HandoverTests(unittest.TestCase):
                 vehicle, Map(None), Carla, 2.5, 60
             ),
         )
+
+    def test_scenario_metrics_never_serialize_infinity(self):
+        metrics = CONTROLLER.bounded_scenario_metrics(
+            0, 0.0, None, 0.0, math.inf, None, []
+        )
+        self.assertIsNone(metrics["minimum_obstacle_gap_m"])
+        self.assertEqual(metrics["collision_count"], 0)
 
 
 if __name__ == "__main__":

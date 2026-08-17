@@ -151,7 +151,11 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         "run_id": run_directory.name,
         "status": "starting",
         "started_at": M5.utc_now(),
-        "control_source": "live_manual_autopilot_handover",
+        "control_source": (
+            "hybrid_brake_scenario_manual_handover"
+            if config["controller"].get("scenario") is not None
+            else "live_manual_autopilot_handover"
+        ),
         "configuration": config,
         "runtime_command": M5.public_runtime_options(runtime_command),
         "artifacts": {
@@ -234,10 +238,17 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         )
         wait_until_ready(keyboard, 10.0, "the keyboard-control window")
         timeline_mark(timeline_file, started_at, "keyboard_ready")
-        print(
-            "[6/6] READY — choose Manual Control or Autopilot in the control window.",
-            flush=True,
-        )
+        if config["controller"].get("scenario") is not None:
+            ready_message = (
+                "[6/6] READY — start/restart the scripted scenario, choose "
+                "Manual Control, Autopilot, or Safe Stop."
+            )
+        else:
+            ready_message = (
+                "[6/6] READY — choose Manual Control or Autopilot in the "
+                "control window."
+            )
+        print(ready_message, flush=True)
 
         while keyboard.process.poll() is None:
             if STOP_REQUESTED.wait(0.1):

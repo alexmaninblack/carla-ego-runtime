@@ -29,6 +29,7 @@ def load_module(name: str, path: Path) -> Any:
 TOOLS = Path(__file__).resolve().parent
 M5 = load_module("m6_m5_helpers", TOOLS / "behavior_agent_controller.py")
 PROTOCOL = load_module("m6_control_protocol", TOOLS / "external_control_protocol.py")
+BRAKE = load_module("m6_brake_scenario", TOOLS / "brake_event_scenario.py")
 STOP_REQUESTED = False
 
 
@@ -120,6 +121,40 @@ def blend_control(carla: Any, first: Any, second: Any, alpha: float) -> Any:
     )
 
 
+def reset_scenario_vehicle(carla: Any, vehicle: Any, transform: Any) -> None:
+    vehicle.apply_control(
+        carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+    )
+    vehicle.set_transform(transform)
+    vehicle.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+    vehicle.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+
+
+def bounded_scenario_metrics(
+    frame_count: int,
+    elapsed_seconds: float,
+    brake_onset_speed_kmh: Optional[float],
+    peak_deceleration_mps2: float,
+    minimum_obstacle_gap_m: float,
+    stop_gap_m: Optional[float],
+    collision_frames: list[int],
+) -> Dict[str, Any]:
+    return {
+        "frames": frame_count,
+        "elapsed_seconds": elapsed_seconds,
+        "brake_onset_speed_kmh": brake_onset_speed_kmh,
+        "peak_deceleration_mps2": peak_deceleration_mps2,
+        "minimum_obstacle_gap_m": (
+            minimum_obstacle_gap_m
+            if math.isfinite(minimum_obstacle_gap_m)
+            else None
+        ),
+        "stop_gap_m": stop_gap_m,
+        "collision_count": len(collision_frames),
+        "collision_frames": list(collision_frames),
+    }
+
+
 def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int:
     carla, _ = M5.import_carla(arguments.python_api_root)
     carla_config = config["carla"]
@@ -129,6 +164,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
     controller_config = config["controller"]
     control_config = controller_config["external_control"]
     autopilot_config = controller_config.get("autopilot")
+    scenario_config = controller_config.get("scenario")
     status: Dict[str, Any] = {
         "schema_version": 1,
         "state": "starting",
@@ -150,16 +186,25 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
 
     original_settings = world.get_settings()
     vehicle = None
+    obstacle = None
+    collision_sensor = None
     settings_changed = False
     server = None
     completed = False
     stopped = False
     control_events = []
+    scenario_runs: list[Dict[str, Any]] = []
+    collision_frames: list[int] = []
     status_lock = threading.Lock()
     availability_lock = threading.Lock()
     autopilot_unavailable = (
         "autopilot is not configured" if autopilot_config is None else None
     )
+    available_modes = {"safe_stop", "manual"}
+    if autopilot_config is not None:
+        available_modes.add("autopilot")
+    if scenario_config is not None:
+        available_modes.add("scenario")
 
     def write_status(**fields: Any) -> None:
         with status_lock:
@@ -175,19 +220,26 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         write_status(control=snapshot)
 
     def validate_mode(mode: str) -> Optional[str]:
+        if mode == "scenario" and scenario_config is None:
+            return "scripted scenario is not configured"
         if mode != "autopilot":
             return None
         with availability_lock:
             return autopilot_unavailable
 
     try:
-        existing = [
-            actor
+        occupied_roles = {
+            actor.attributes.get("role_name")
             for actor in world.get_actors().filter("vehicle.*")
-            if M5.has_role_name(actor, vehicle_config["role_name"])
-        ]
-        if existing:
+        }
+        if vehicle_config["role_name"] in occupied_roles:
             raise RuntimeError("an existing hero vehicle already exists")
+        if scenario_config is not None:
+            obstacle_role = scenario_config["obstacle"]["role_name"]
+            if obstacle_role in occupied_roles:
+                raise RuntimeError(
+                    "an existing brake-event obstacle already exists"
+                )
 
         settings = world.get_settings()
         settings.synchronous_mode = True
@@ -199,7 +251,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         start_index = int(route_config["start_spawn_point"])
         if start_index >= len(spawn_points):
             raise RuntimeError("external-control spawn point is unavailable")
-        blueprint = world.get_blueprint_library().find(vehicle_config["blueprint"])
+        blueprint_library = world.get_blueprint_library()
+        blueprint = blueprint_library.find(vehicle_config["blueprint"])
         if blueprint is None or not blueprint.has_attribute("role_name"):
             raise RuntimeError("configured vehicle blueprint is unavailable")
         blueprint.set_attribute("role_name", vehicle_config["role_name"])
@@ -207,6 +260,48 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         if vehicle is None:
             raise RuntimeError(f"start spawn point {start_index} is occupied")
         world.tick(float(carla_config["timeout_seconds"]))
+
+        if scenario_config is not None:
+            obstacle_config = scenario_config["obstacle"]
+            start_waypoint = carla_map.get_waypoint(
+                spawn_points[start_index].location,
+                project_to_road=True,
+                lane_type=carla.LaneType.Driving,
+            )
+            if start_waypoint is None:
+                raise RuntimeError("the scenario start is not on a driving lane")
+            obstacle_waypoint = BRAKE.advance_waypoint(
+                start_waypoint, float(obstacle_config["distance_m"])
+            )
+            obstacle_transform = obstacle_waypoint.transform
+            obstacle_transform.location.z += float(
+                obstacle_config["spawn_height_m"]
+            )
+            obstacle = BRAKE.spawn_vehicle(
+                world,
+                blueprint_library,
+                obstacle_config["blueprint"],
+                obstacle_config["role_name"],
+                obstacle_transform,
+            )
+            obstacle.apply_control(
+                carla.VehicleControl(throttle=0.0, brake=1.0, hand_brake=True)
+            )
+            obstacle.set_simulate_physics(False)
+            collision_blueprint = blueprint_library.find(
+                "sensor.other.collision"
+            )
+            if collision_blueprint is None:
+                raise RuntimeError(
+                    "CARLA collision sensor blueprint is unavailable"
+                )
+            collision_sensor = world.spawn_actor(
+                collision_blueprint, carla.Transform(), attach_to=vehicle
+            )
+            collision_sensor.listen(
+                lambda event: collision_frames.append(int(event.frame))
+            )
+            world.tick(float(carla_config["timeout_seconds"]))
 
         traffic_manager = None
         traffic_manager_port = None
@@ -237,6 +332,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             float(control_config["ownership_timeout_seconds"]),
             emit_control,
             validate_mode,
+            available_modes,
         )
         server = PROTOCOL.LocalControlServer(
             arguments.socket_file,
@@ -252,6 +348,16 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             vehicle_type=vehicle.type_id,
             socket=arguments.socket_file.name,
             token=arguments.token_file.name,
+            available_modes=sorted(available_modes),
+            scenario=(
+                {
+                    "id": scenario_config["id"],
+                    "obstacle_vehicle_id": obstacle.id,
+                    "state": "ready",
+                }
+                if scenario_config is not None and obstacle is not None
+                else None
+            ),
         )
         emit(
             "external_controller_ready",
@@ -293,8 +399,57 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         last_safe_stop: Optional[bool] = None
         last_reason = ""
         active_mode = "safe_stop"
+        active_mode_generation = 0
         handover_started_at: Optional[float] = None
         handover_control = None
+        manual_handover_seconds = float(
+            control_config.get(
+                "manual_handover_seconds",
+                (
+                    autopilot_config["manual_handover_seconds"]
+                    if autopilot_config is not None
+                    else 0.3
+                ),
+            )
+        )
+        scenario_machine = None
+        scenario_started_at: Optional[float] = None
+        scenario_frame_count = 0
+        scenario_minimum_gap = math.inf
+        scenario_peak_deceleration = 0.0
+        scenario_stop_gap: Optional[float] = None
+        scenario_finished = False
+
+        def scenario_record(
+            result: str, failure_reasons: list[str], recorded_at: float
+        ) -> Dict[str, Any]:
+            metrics = bounded_scenario_metrics(
+                scenario_frame_count,
+                (
+                    recorded_at - scenario_started_at
+                    if scenario_started_at is not None
+                    else 0.0
+                ),
+                (
+                    scenario_machine.brake_onset_speed_kmh
+                    if scenario_machine is not None
+                    else None
+                ),
+                scenario_peak_deceleration,
+                scenario_minimum_gap,
+                scenario_stop_gap,
+                collision_frames,
+            )
+            return {
+                "id": scenario_config["id"] if scenario_config else None,
+                "mode_generation": active_mode_generation,
+                "state": "complete",
+                "result": result,
+                "failure_reasons": failure_reasons,
+                "metrics": metrics,
+                "updated_at": utc_now(),
+            }
+
         while not STOP_REQUESTED:
             now = time.monotonic()
             if now - started_at > float(control_config["maximum_session_seconds"]):
@@ -310,27 +465,149 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                         float(autopilot_config["maximum_road_distance_m"]),
                         float(autopilot_config["maximum_heading_error_degrees"]),
                     )
-            if applied.mode != active_mode:
+            mode_changed = (
+                applied.mode != active_mode
+                or applied.mode_generation != active_mode_generation
+            )
+            if mode_changed:
                 previous_mode = active_mode
+                if (
+                    active_mode == "scenario"
+                    and scenario_machine is not None
+                    and not scenario_finished
+                ):
+                    aborted = scenario_record(
+                        "ABORTED", ["operator changed the driving mode"], now
+                    )
+                    scenario_runs.append(aborted)
+                    write_status(scenario=aborted, scenario_runs=scenario_runs)
+                    emit("scenario_evaluated", **aborted)
+                    scenario_finished = True
                 if active_mode == "autopilot" and traffic_manager_port is not None:
                     handover_control = vehicle.get_control()
                     vehicle.set_autopilot(False, traffic_manager_port)
-                    handover_started_at = now if applied.mode == "manual" else None
+                if (
+                    active_mode in {"autopilot", "scenario"}
+                    and applied.mode == "manual"
+                ):
+                    handover_control = vehicle.get_control()
+                    handover_started_at = now
+                else:
+                    handover_started_at = None
                 if applied.mode == "autopilot":
                     if traffic_manager_port is None:
                         raise RuntimeError("autopilot mode selected without Traffic Manager")
                     handover_started_at = None
                     handover_control = None
                     vehicle.set_autopilot(True, traffic_manager_port)
+                if applied.mode == "scenario":
+                    if scenario_config is None or obstacle is None:
+                        raise RuntimeError(
+                            "scenario mode selected without a configured obstacle"
+                        )
+                    reset_scenario_vehicle(
+                        carla, vehicle, spawn_points[start_index]
+                    )
+                    last_location = vehicle.get_location()
+                    collision_frames.clear()
+                    scenario_machine = BRAKE.BrakeScenarioStateMachine(
+                        scenario_config, period
+                    )
+                    scenario_started_at = now
+                    scenario_frame_count = 0
+                    scenario_minimum_gap = math.inf
+                    scenario_peak_deceleration = 0.0
+                    scenario_stop_gap = None
+                    scenario_finished = False
+                    emit(
+                        "scenario_started",
+                        scenario_id=scenario_config["id"],
+                        mode_generation=applied.mode_generation,
+                    )
                 active_mode = applied.mode
+                active_mode_generation = applied.mode_generation
                 emit(
                     "drive_mode_applied",
                     previous_mode=previous_mode,
                     mode=active_mode,
+                    mode_generation=active_mode_generation,
                 )
-                write_status(drive_mode=active_mode)
+                write_status(
+                    drive_mode=active_mode,
+                    scenario=(
+                        {
+                            "id": scenario_config["id"],
+                            "mode_generation": active_mode_generation,
+                            "state": "running",
+                            "phase": scenario_machine.phase,
+                            "updated_at": utc_now(),
+                        }
+                        if active_mode == "scenario"
+                        and scenario_config is not None
+                        and scenario_machine is not None
+                        else status.get("scenario")
+                    ),
+                )
 
-            if active_mode != "autopilot":
+            if active_mode == "scenario":
+                if scenario_config is None or scenario_machine is None or obstacle is None:
+                    raise RuntimeError("scenario mode is not initialized")
+                scenario_elapsed = (
+                    now - scenario_started_at
+                    if scenario_started_at is not None
+                    else 0.0
+                )
+                failure_reasons = []
+                if collision_frames:
+                    failure_reasons.append("a collision was recorded")
+                if scenario_elapsed > float(
+                    scenario_config["maximum_duration_seconds"]
+                ):
+                    failure_reasons.append("braking scenario duration exceeded")
+                if failure_reasons and not scenario_finished:
+                    failed = scenario_record("FAIL", failure_reasons, now)
+                    scenario_runs.append(failed)
+                    write_status(scenario=failed, scenario_runs=scenario_runs)
+                    emit("scenario_evaluated", **failed)
+                    scenario_finished = True
+                    control_state.force_safe_stop("scenario_failed")
+                    requested = carla.VehicleControl(
+                        throttle=0.0, brake=1.0, steer=0.0
+                    )
+                elif scenario_finished:
+                    requested = carla.VehicleControl(
+                        throttle=0.0, brake=1.0, steer=0.0
+                    )
+                else:
+                    vehicle_transform = vehicle.get_transform()
+                    current_waypoint = carla_map.get_waypoint(
+                        vehicle_transform.location,
+                        project_to_road=True,
+                        lane_type=carla.LaneType.Driving,
+                    )
+                    if current_waypoint is None:
+                        raise RuntimeError(
+                            "scenario vehicle left the driving lane"
+                        )
+                    target_waypoint = BRAKE.choose_forward_waypoint(
+                        current_waypoint,
+                        float(scenario_config["lookahead_distance_m"]),
+                    )
+                    gap = BRAKE.obstacle_gap_m(vehicle, obstacle)
+                    scenario_control = scenario_machine.step(
+                        BRAKE.speed_kmh(vehicle), gap
+                    )
+                    requested = carla.VehicleControl(
+                        throttle=scenario_control.throttle,
+                        brake=scenario_control.brake,
+                        steer=BRAKE.steering_command(
+                            vehicle_transform,
+                            target_waypoint.transform.location,
+                            float(scenario_config["maximum_steering"]),
+                        ),
+                    )
+                vehicle.apply_control(requested)
+            elif active_mode != "autopilot":
                 requested = carla.VehicleControl(
                     throttle=applied.throttle,
                     brake=applied.brake,
@@ -340,10 +617,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     active_mode == "manual"
                     and handover_started_at is not None
                     and handover_control is not None
-                    and autopilot_config is not None
                 ):
-                    duration = float(autopilot_config["manual_handover_seconds"])
-                    alpha = (now - handover_started_at) / duration
+                    alpha = (now - handover_started_at) / manual_handover_seconds
                     requested = blend_control(carla, handover_control, requested, alpha)
                     if alpha >= 1.0:
                         handover_started_at = None
@@ -379,6 +654,71 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 velocity.x**2 + velocity.y**2 + velocity.z**2
             )
             maximum_speed_kmh = max(maximum_speed_kmh, current_speed_kmh)
+            if (
+                active_mode == "scenario"
+                and scenario_config is not None
+                and scenario_machine is not None
+                and obstacle is not None
+                and not scenario_finished
+            ):
+                scenario_frame_count += 1
+                gap = BRAKE.obstacle_gap_m(vehicle, obstacle)
+                scenario_minimum_gap = min(scenario_minimum_gap, gap)
+                scenario_peak_deceleration = min(
+                    scenario_peak_deceleration,
+                    BRAKE.longitudinal_acceleration_mps2(vehicle),
+                )
+                if scenario_machine.phase == "HOLD" and scenario_stop_gap is None:
+                    scenario_stop_gap = gap
+                if scenario_machine.phase == "COMPLETE":
+                    metrics = bounded_scenario_metrics(
+                        scenario_frame_count,
+                        (
+                            now - scenario_started_at
+                            if scenario_started_at is not None
+                            else 0.0
+                        ),
+                        scenario_machine.brake_onset_speed_kmh,
+                        scenario_peak_deceleration,
+                        scenario_minimum_gap,
+                        scenario_stop_gap,
+                        collision_frames,
+                    )
+                    passed, failure_reasons = BRAKE.evaluate_result(
+                        scenario_config, metrics
+                    )
+                    evaluated = {
+                        "id": scenario_config["id"],
+                        "mode_generation": active_mode_generation,
+                        "state": "complete",
+                        "result": "PASS" if passed else "FAIL",
+                        "failure_reasons": failure_reasons,
+                        "metrics": metrics,
+                        "updated_at": utc_now(),
+                    }
+                    scenario_runs.append(evaluated)
+                    write_status(
+                        scenario=evaluated, scenario_runs=scenario_runs
+                    )
+                    emit("scenario_evaluated", **evaluated)
+                    scenario_finished = True
+                    control_state.force_safe_stop(
+                        "scenario_complete" if passed else "scenario_failed"
+                    )
+                elif scenario_frame_count % 15 == 0:
+                    write_status(
+                        scenario={
+                            "id": scenario_config["id"],
+                            "mode_generation": active_mode_generation,
+                            "state": "running",
+                            "phase": scenario_machine.phase,
+                            "frame_count": scenario_frame_count,
+                            "speed_kmh": current_speed_kmh,
+                            "obstacle_gap_m": gap,
+                            "collision_count": len(collision_frames),
+                            "updated_at": utc_now(),
+                        }
+                    )
             if now - last_motion_status_at >= 1.0:
                 write_status(
                     motion={
@@ -401,6 +741,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 "maximum_speed_kmh": maximum_speed_kmh,
                 "current_speed_kmh": current_speed_kmh,
             },
+            scenario_runs=scenario_runs,
         )
 
         if arguments.stop_file is not None and completed:
@@ -428,6 +769,20 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
     finally:
         if server is not None:
             server.stop()
+        if collision_sensor is not None:
+            try:
+                if collision_sensor.is_listening:
+                    collision_sensor.stop()
+                collision_sensor.destroy()
+                emit("collision_sensor_destroyed")
+            except RuntimeError as error:
+                emit("collision_sensor_cleanup_failed", error=str(error))
+        if obstacle is not None:
+            try:
+                obstacle.destroy()
+                emit("obstacle_destroyed", vehicle_id=obstacle.id)
+            except RuntimeError as error:
+                emit("obstacle_cleanup_failed", error=str(error))
         if vehicle is not None:
             try:
                 if "traffic_manager_port" in locals() and traffic_manager_port is not None:
@@ -456,6 +811,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 "completed" if completed else "stopped" if stopped else "failed"
             ),
             control_events=control_events,
+            scenario_runs=scenario_runs,
         )
 
 

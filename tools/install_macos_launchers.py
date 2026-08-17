@@ -188,6 +188,7 @@ exit ${{STATUS}}
 
 def brake_event_command(arguments: argparse.Namespace) -> str:
     brake_event_root = arguments.state_directory / "brake-event"
+    keyboard_app = brake_event_root / "CARLA Brake Event Control.app"
     return f"""#!/bin/zsh
 
 set -u
@@ -202,14 +203,17 @@ readonly PYTHON={quote(arguments.python)}
 readonly TLS_ROOT={quote(arguments.tls_root)}
 
 cd "${{RUNTIME_ROOT}}" || exit 1
-"${{PYTHON}}" tools/launch_brake_event_demo.py \\
-  --config config/brake_event_town10hd.json \\
+"${{PYTHON}}" tools/launch_m6_1.py \\
+  --config config/brake_event_hybrid_town10hd.json \\
   --runtime "${{BUILD_ROOT}}/carla-ego-runtime" \\
   --viss-client "${{BUILD_ROOT}}/carla-viss-client" \\
   --python "${{PYTHON}}" \\
   --python-api-root "${{CARLA_ROOT}}/PythonAPI/carla" \\
   --certificate "${{TLS_ROOT}}/server-cert.pem" \\
   --private-key "${{TLS_ROOT}}/server-key.pem" \\
+  --keyboard-source "${{RUNTIME_ROOT}}/tools/KeyboardControl.swift" \\
+  --keyboard-info "${{RUNTIME_ROOT}}/tools/KeyboardControl-Info.plist" \\
+  --keyboard-app {quote(keyboard_app)} \\
   --run-root {quote(brake_event_root / "runs")} \\
   --unreal-editor {quote(arguments.unreal_editor)} \\
   --uproject "${{CARLA_ROOT}}/Unreal/CarlaUnreal/CarlaUnreal.uproject" \\
@@ -227,7 +231,7 @@ cd "${{RUNTIME_ROOT}}" || exit 1
 
 readonly STATUS=$?
 if [[ ${{STATUS}} -eq 0 ]]; then
-  print "\\nBrake-event scenario passed; CARLA cleanup is complete."
+  print "\\nBrake-event session finished; CARLA cleanup is complete."
 elif [[ ${{STATUS}} -eq 130 ]]; then
   print "\\nSession stopped by the operator; CARLA cleanup is complete."
 else
@@ -369,6 +373,10 @@ def prepare_arguments(arguments: argparse.Namespace) -> argparse.Namespace:
         ("config/m5_town10hd_route.json", "M5 configuration"),
         ("config/m6_2_town10hd_handover.json", "M6.2 configuration"),
         ("config/brake_event_town10hd.json", "brake-event configuration"),
+        (
+            "config/brake_event_hybrid_town10hd.json",
+            "hybrid brake-event configuration",
+        ),
     ):
         require_file(REPOSITORY / relative_path, label)
     if arguments.icon_source is None:

@@ -70,6 +70,19 @@ def set_mode(state, session, mode, now):
     )
 
 
+def acquire_v3(state, now=1.0):
+    return state.handle(
+        {
+            "version": 3,
+            "action": "acquire",
+            "requestId": "a3",
+            "clientId": "scenario-test-driver",
+            "token": "secret",
+        },
+        now,
+    )
+
+
 class ExternalControlStateTests(unittest.TestCase):
     def setUp(self):
         self.events = []
@@ -229,6 +242,68 @@ class ExternalControlStateTests(unittest.TestCase):
         self.assertEqual(stopped.mode, "safe_stop")
         self.assertTrue(stopped.safe_stop)
         self.assertEqual(stopped.brake, 1.0)
+
+    def test_v3_scenario_reselection_increments_generation(self):
+        state = ExternalControlState(
+            "secret",
+            0.25,
+            1.0,
+            available_modes={"safe_stop", "manual", "scenario"},
+        )
+        acquired = acquire_v3(state)
+        self.assertEqual(
+            acquired["availableModes"], ["manual", "safe_stop", "scenario"]
+        )
+        session = acquired["sessionId"]
+        first = set_mode(state, session, "scenario", 1.1)
+        second = set_mode(state, session, "scenario", 1.2)
+        self.assertGreater(second["modeGeneration"], first["modeGeneration"])
+        self.assertEqual(state.snapshot()["scenario_activations"], 2)
+
+    def test_controller_can_report_scenario_completion_as_safe_stop(self):
+        state = ExternalControlState(
+            "secret",
+            0.25,
+            1.0,
+            available_modes={"safe_stop", "manual", "scenario"},
+        )
+        acquired = acquire_v3(state)
+        session = acquired["sessionId"]
+        set_mode(state, session, "scenario", 1.1)
+        state.force_safe_stop("scenario_complete")
+        stopped = state.current_control(1.2)
+        self.assertEqual(stopped.mode, "safe_stop")
+        self.assertEqual(stopped.reason, "scenario_complete")
+        heartbeat = state.handle(
+            {
+                "version": 3,
+                "action": "heartbeat",
+                "requestId": "h3",
+                "sessionId": session,
+            },
+            1.2,
+        )
+        self.assertEqual(heartbeat["mode"], "safe_stop")
+        self.assertEqual(heartbeat["reason"], "scenario_complete")
+
+    def test_unconfigured_scenario_mode_is_rejected(self):
+        state = ExternalControlState(
+            "secret",
+            0.25,
+            1.0,
+            available_modes={"safe_stop", "manual"},
+        )
+        session = acquire_v3(state)["sessionId"]
+        with self.assertRaises(ControlProtocolError) as unavailable:
+            set_mode(state, session, "scenario", 1.1)
+        self.assertEqual(unavailable.exception.code, "mode_unavailable")
+
+    def test_default_modes_do_not_advertise_optional_scenario(self):
+        state = ExternalControlState("secret", 0.25, 1.0)
+        acquired = acquire_v3(state)
+        self.assertEqual(
+            acquired["availableModes"], ["autopilot", "manual", "safe_stop"]
+        )
 
 
 class LocalControlServerTests(unittest.TestCase):

@@ -56,13 +56,15 @@ class M61ToolTests(unittest.TestCase):
         self.assertIn("centeredText(statusDetail", source)
         self.assertIn("centeredText(title, in: rect", source)
 
-    def test_live_handover_ui_has_three_explicit_modes(self):
+    def test_live_handover_ui_has_explicit_modes_and_hybrid_scenario(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
         self.assertIn('onMode?("manual")', source)
         self.assertIn('onMode?("autopilot")', source)
         self.assertIn('onMode?("safe_stop")', source)
+        self.assertIn('onMode?("scenario")', source)
         self.assertIn('view.mode == "manual"', source)
-        self.assertIn("autopilot continues driving", source)
+        self.assertIn("START SCRIPTED SCENARIO", source)
+        self.assertIn("scripted and autopilot modes continue", source)
 
     def test_keyboard_configuration_is_external_and_operator_bounded(self):
         config = CONTROLLER.load_config(
@@ -86,6 +88,21 @@ class M61ToolTests(unittest.TestCase):
         self.assertAlmostEqual(config["simulation"]["fixed_delta_seconds"], 1 / 30)
         self.assertEqual(config["runtime"]["chase_camera_update_hz"], 30)
 
+    def test_hybrid_brake_event_reuses_external_control(self):
+        config = CONTROLLER.load_config(
+            REPOSITORY / "config" / "brake_event_hybrid_town10hd.json"
+        )
+        self.assertEqual(config["controller"]["type"], "external_control")
+        self.assertEqual(
+            config["controller"]["scenario"]["id"],
+            "stationary-obstacle-braking-v1",
+        )
+        self.assertEqual(
+            config["controller"]["external_control"]["manual_handover_seconds"],
+            0.3,
+        )
+        self.assertIn("autopilot", config["controller"])
+
     def test_keyboard_command_uses_private_run_artifact_paths(self):
         arguments = type(
             "Arguments",
@@ -106,6 +123,8 @@ class M61ToolTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('current_mode = "safe_stop"', source)
         self.assertIn('elif current_mode == "manual":', source)
+        self.assertIn("protocol_version=3", source)
+        self.assertIn('server_mode != current_mode', source)
 
     def test_native_keyboard_app_paths_are_launcher_owned(self):
         source = (REPOSITORY / "tools" / "launch_m6_1.py").read_text()

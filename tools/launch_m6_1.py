@@ -202,7 +202,13 @@ def run(arguments: argparse.Namespace) -> int:
     orchestrator: Optional[subprocess.Popen[str]] = None
     try:
         lock.acquire()
-        print("\033]0;CARLA M6.2 — VSS Dashboard\007", end="", flush=True)
+        hybrid_scenario = config["controller"].get("scenario") is not None
+        terminal_title = (
+            "CARLA Brake Event — Engineering Dashboard"
+            if hybrid_scenario
+            else "CARLA M6.2 — VSS Dashboard"
+        )
+        print(f"\033]0;{terminal_title}\007", end="", flush=True)
         print("[1/5] Preflight: checking CARLA and local components...", flush=True)
         carla = BASE.import_carla(arguments.python_api_root)
         carla_config = config["carla"]
@@ -288,6 +294,13 @@ def run(arguments: argparse.Namespace) -> int:
         if simulator is not None and not arguments.keep_owned_simulator_running:
             BASE.stop_owned_process(simulator, "CARLA simulator")
             timeline_mark(timeline_file, started_at, "owned_simulator_stopped")
+            print("CARLA was started by this session and has been closed.", flush=True)
+        elif simulator is None and "launch_mode" in locals() and launch_mode == "warm":
+            print(
+                "CARLA was already running and remains open; use Command-Q in "
+                "its window when you want to close it.",
+                flush=True,
+            )
         if simulator_log is not None:
             simulator_log.close()
         lock.release()
