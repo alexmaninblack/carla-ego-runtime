@@ -171,7 +171,8 @@ cd "${{RUNTIME_ROOT}}" || exit 1
   --unreal-argument=-WinY=70 \\
   --unreal-argument=-quality-level=Low \\
   --unreal-argument=-nosound \\
-  --unreal-argument=-carla-rpc-port=2000
+  --unreal-argument=-carla-rpc-port=2000 \\
+  --close-reused-simulator-on-exit
 
 readonly STATUS=$?
 if [[ ${{STATUS}} -eq 0 ]]; then
@@ -227,7 +228,8 @@ cd "${{RUNTIME_ROOT}}" || exit 1
   --unreal-argument=-quality-level=Low \\
   --unreal-argument=-nosound \\
   --unreal-argument=-carla-rpc-port=2000 \\
-  --unreal-log {quote(brake_event_root / "unreal.log")}
+  --unreal-log {quote(brake_event_root / "unreal.log")} \\
+  --close-reused-simulator-on-exit
 
 readonly STATUS=$?
 if [[ ${{STATUS}} -eq 0 ]]; then

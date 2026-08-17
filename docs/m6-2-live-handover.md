@@ -19,6 +19,11 @@ The native panel presents three complete mode buttons and equivalent keys:
   and full brake is applied.
 - **Exit** — press Escape or close the window to stop and clean up the session.
 
+The installed Desktop application treats that action as the end of the entire
+visible demonstration, including CARLA. If CARLA was already running, it is
+closed only after its executable, project, and RPC-port identity are verified.
+The lower-level launcher retains a conservative opt-in flag for this behavior.
+
 The panel starts in safe stop. Focus loss selects safe stop only while manual
 mode is active, because the operator is then the active command source. It does
 not stop an intentionally selected autopilot demonstration.
@@ -64,6 +69,8 @@ cadence avoids the resulting long frames.
 - The local socket and token use a short owner-only temporary runtime directory
   and are removed at shutdown; durable artifacts remain under the configured
   run root.
+- Desktop full-lifecycle shutdown adopts only one exactly verified warm CARLA
+  process and rechecks its identity before sending termination signals.
 
 ## Acceptance
 

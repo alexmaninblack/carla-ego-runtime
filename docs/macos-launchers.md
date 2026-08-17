@@ -9,6 +9,15 @@
   session with scripted/restart, manual, autopilot, and safe-stop controls and
   keeps its expanded engineering telemetry dashboard visible in Terminal.
 
+`CARLA Manual Drive.app` and `CARLA Brake Event.app` own the complete visible
+demo lifecycle. Escape or closing the native control panel removes the session
+actors and telemetry resources and closes CARLA. On a warm start, the launcher
+first verifies that the sole listener on the configured RPC port is the exact
+expected Unreal executable and `CarlaUnreal.uproject`; it refuses to terminate
+an unverified process. Direct engineering use of `launch_m6_1.py` keeps the
+conservative reuse-without-close behavior unless
+`--close-reused-simulator-on-exit` is explicitly selected.
+
 The bundles contain only a generic wrapper and a CARLA icon. Machine-specific
 paths and generated launch commands are written outside the repository. TLS
 private keys, runtime binaries, Unreal Engine files, and CARLA assets are never

@@ -180,6 +180,8 @@ controller owner, and no remaining control socket or token.
 - [x] Return a completed scripted attempt to safe stop without ending the
   interactive session.
 - [x] Preserve the standalone one-run qualification launcher.
+- [x] Make Desktop Escape/panel close terminate the full demo lifecycle for
+  both cold and verified warm CARLA starts.
 
 Exit criterion: one Brake Event session can be interrupted for manual braking,
 restarted, completed automatically, and cleaned without replacing the ego
@@ -187,6 +189,8 @@ actor or interrupting engineering telemetry.
 
 Status: complete. Implementation, automated live handover acceptance, and
 operator-observed UI acceptance passed on the pinned Apple Silicon baseline.
+Verified warm-start lifecycle acceptance also passed: Escape released all
+session resources and stopped the adopted, identity-checked CARLA process.
 
 ## Deferred
 

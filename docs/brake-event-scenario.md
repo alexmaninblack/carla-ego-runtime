@@ -108,8 +108,9 @@ multiple times with a strict reset between runs.
 The macOS launcher installer creates `CARLA Brake Event.app`. Opening it starts
 the hybrid session, native control panel, and expanded engineering dashboard in
 Terminal. Closing the panel cleans the session. CARLA is also closed when that
-session started it; a simulator that was already running is deliberately left
-open and can be closed with Command-Q.
+session started it. The desktop application also adopts and closes a compatible
+already-running `CarlaUnreal` process after verifying its project path and RPC
+port. This gives Escape and panel close one consistent full-demo lifecycle.
 
 For an unattended single-run qualification, use the same native runtime, CARLA
 Python environment, and loopback TLS material as the existing M6.2 launcher:

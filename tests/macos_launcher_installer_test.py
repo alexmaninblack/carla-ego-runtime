@@ -119,6 +119,9 @@ class MacOSLauncherInstallerTests(unittest.TestCase):
         self.assertIn("tools/launch_m6_1.py", brake_event)
         self.assertIn("CARLA Brake Event Control.app", brake_event)
         self.assertNotIn("--dashboard-quiet", brake_event)
+        self.assertIn("--close-reused-simulator-on-exit", manual)
+        self.assertIn("--close-reused-simulator-on-exit", brake_event)
+        self.assertNotIn("--close-reused-simulator-on-exit", route)
         self.assertIn(str(self.python), manual + route + brake_event)
         self.assertNotIn("alexagizim", INSTALLER.read_text(encoding="utf-8"))
         self.assertEqual(

@@ -112,6 +112,20 @@ def validate_paths(arguments: argparse.Namespace) -> None:
             raise ValueError(f"{option} does not exist: {path}")
     if arguments.carla_startup_timeout_seconds < 10:
         raise ValueError("--carla-startup-timeout-seconds must be at least 10")
+    if (
+        arguments.keep_owned_simulator_running
+        and arguments.close_reused_simulator_on_exit
+    ):
+        raise ValueError(
+            "--keep-owned-simulator-running and "
+            "--close-reused-simulator-on-exit cannot be combined"
+        )
+    if arguments.close_reused_simulator_on_exit and (
+        arguments.unreal_editor is None or arguments.uproject is None
+    ):
+        raise ValueError(
+            "--close-reused-simulator-on-exit requires --unreal-editor and --uproject"
+        )
 
 
 def build_keyboard_app(arguments: argparse.Namespace) -> Path:
@@ -171,6 +185,122 @@ def manual_run_cleanup_is_valid(
     )
 
 
+def listening_process_ids(port: int) -> list[int]:
+    result = subprocess.run(
+        ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"could not inspect CARLA RPC port {port}")
+    process_ids = []
+    for line in result.stdout.splitlines():
+        try:
+            process_ids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return process_ids
+
+
+def process_command(process_id: int) -> str:
+    result = subprocess.run(
+        ["ps", "-p", str(process_id), "-o", "command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def simulator_command_matches(
+    command: str,
+    unreal_editor: Optional[Path],
+    uproject: Optional[Path],
+    rpc_port: int,
+) -> bool:
+    if not command or unreal_editor is None or uproject is None:
+        return False
+    editor_text = str(unreal_editor)
+    project_text = str(uproject)
+    return (
+        (command == editor_text or command.startswith(editor_text + " "))
+        and f" {project_text} " in f" {command} "
+        and f"-carla-rpc-port={rpc_port}" in command
+    )
+
+
+def adopt_reused_simulator(arguments: argparse.Namespace, rpc_port: int) -> int:
+    matches = [
+        process_id
+        for process_id in listening_process_ids(rpc_port)
+        if simulator_command_matches(
+            process_command(process_id),
+            arguments.unreal_editor,
+            arguments.uproject,
+            rpc_port,
+        )
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            "cannot safely adopt the running CARLA process; expected exactly "
+            f"one matching CarlaUnreal listener on port {rpc_port}"
+        )
+    return matches[0]
+
+
+def wait_for_process_exit(process_id: int, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not process_command(process_id):
+            return True
+        time.sleep(0.1)
+    return not process_command(process_id)
+
+
+def stop_reused_simulator(
+    process_id: int, arguments: argparse.Namespace, rpc_port: int
+) -> None:
+    command = process_command(process_id)
+    if not command:
+        return
+    if not simulator_command_matches(
+        command,
+        arguments.unreal_editor,
+        arguments.uproject,
+        rpc_port,
+    ):
+        raise RuntimeError(
+            "refusing to stop a reused process whose identity no longer matches CARLA"
+        )
+    print("Stopping session-adopted CARLA simulator...", flush=True)
+    os.kill(process_id, signal.SIGINT)
+    if wait_for_process_exit(process_id, 30):
+        return
+    if not simulator_command_matches(
+        process_command(process_id),
+        arguments.unreal_editor,
+        arguments.uproject,
+        rpc_port,
+    ):
+        raise RuntimeError(
+            "refusing to terminate a reused process whose identity changed"
+        )
+    os.kill(process_id, signal.SIGTERM)
+    if wait_for_process_exit(process_id, 10):
+        return
+    if not simulator_command_matches(
+        process_command(process_id),
+        arguments.unreal_editor,
+        arguments.uproject,
+        rpc_port,
+    ):
+        raise RuntimeError("refusing to kill a reused process whose identity changed")
+    os.kill(process_id, signal.SIGKILL)
+    if not wait_for_process_exit(process_id, 5):
+        raise RuntimeError("session-adopted CARLA simulator did not exit")
+
+
 def run(arguments: argparse.Namespace) -> int:
     started_at = time.time()
     validate_paths(arguments)
@@ -198,6 +328,7 @@ def run(arguments: argparse.Namespace) -> int:
 
     lock = BASE.SessionLock(arguments.run_root / ".m6_2-session.lock")
     simulator: Optional[subprocess.Popen[str]] = None
+    reused_simulator_pid: Optional[int] = None
     simulator_log: Optional[TextIO] = None
     orchestrator: Optional[subprocess.Popen[str]] = None
     try:
@@ -240,7 +371,26 @@ def run(arguments: argparse.Namespace) -> int:
             )
             launch_mode = "cold"
         else:
-            print("[2/5] Warm start: safely reusing the running CARLA world.", flush=True)
+            if arguments.close_reused_simulator_on_exit:
+                reused_simulator_pid = adopt_reused_simulator(
+                    arguments, int(carla_config["port"])
+                )
+                print(
+                    "[2/5] Warm start: adopting the running CARLA world for "
+                    "full-session cleanup.",
+                    flush=True,
+                )
+                timeline_mark(
+                    timeline_file,
+                    started_at,
+                    "reused_simulator_adopted",
+                    pid=reused_simulator_pid,
+                )
+            else:
+                print(
+                    "[2/5] Warm start: safely reusing the running CARLA world.",
+                    flush=True,
+                )
             launch_mode = "warm"
         expected_map = str(carla_config["expected_map"])
         if map_name != expected_map:
@@ -295,6 +445,19 @@ def run(arguments: argparse.Namespace) -> int:
             BASE.stop_owned_process(simulator, "CARLA simulator")
             timeline_mark(timeline_file, started_at, "owned_simulator_stopped")
             print("CARLA was started by this session and has been closed.", flush=True)
+        elif reused_simulator_pid is not None:
+            stop_reused_simulator(
+                reused_simulator_pid,
+                arguments,
+                int(config["carla"]["port"]),
+            )
+            timeline_mark(
+                timeline_file,
+                started_at,
+                "reused_simulator_stopped",
+                pid=reused_simulator_pid,
+            )
+            print("CARLA was adopted by this session and has been closed.", flush=True)
         elif simulator is None and "launch_mode" in locals() and launch_mode == "warm":
             print(
                 "CARLA was already running and remains open; use Command-Q in "
@@ -332,6 +495,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--unreal-log", type=Path)
     parser.add_argument("--carla-startup-timeout-seconds", type=float, default=300)
     parser.add_argument("--keep-owned-simulator-running", action="store_true")
+    parser.add_argument("--close-reused-simulator-on-exit", action="store_true")
     return parser.parse_args()
 
 

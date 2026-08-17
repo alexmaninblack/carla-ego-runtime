@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -159,6 +160,75 @@ class M61ToolTests(unittest.TestCase):
                 },
             )()
             self.assertEqual(LAUNCHER.build_keyboard_app(arguments), executable)
+
+    def test_reused_simulator_identity_requires_exact_project_and_rpc_port(self):
+        editor = Path("/opt/UnrealEditor")
+        project = Path("/work/CarlaUnreal.uproject")
+        command = (
+            f"{editor} {project} /Game/Carla/Maps/Town10HD_Opt "
+            "-game -carla-rpc-port=2000"
+        )
+        self.assertTrue(
+            LAUNCHER.simulator_command_matches(command, editor, project, 2000)
+        )
+        self.assertFalse(
+            LAUNCHER.simulator_command_matches(
+                command, editor, Path("/work/Other.uproject"), 2000
+            )
+        )
+        self.assertFalse(
+            LAUNCHER.simulator_command_matches(command, editor, project, 2001)
+        )
+        self.assertFalse(
+            LAUNCHER.simulator_command_matches(
+                "/tmp/fake" + command, editor, project, 2000
+            )
+        )
+
+    def test_adopt_reused_simulator_requires_one_verified_listener(self):
+        arguments = type(
+            "Arguments",
+            (),
+            {
+                "unreal_editor": Path("/opt/UnrealEditor"),
+                "uproject": Path("/work/CarlaUnreal.uproject"),
+            },
+        )()
+        matching = (
+            "/opt/UnrealEditor /work/CarlaUnreal.uproject "
+            "-carla-rpc-port=2000"
+        )
+        with mock.patch.object(
+            LAUNCHER, "listening_process_ids", return_value=[42, 43]
+        ), mock.patch.object(
+            LAUNCHER,
+            "process_command",
+            side_effect=lambda process_id: (
+                matching if process_id == 42 else "other"
+            ),
+        ):
+            self.assertEqual(LAUNCHER.adopt_reused_simulator(arguments, 2000), 42)
+
+    def test_stop_reused_simulator_starts_with_interrupt(self):
+        arguments = type(
+            "Arguments",
+            (),
+            {
+                "unreal_editor": Path("/opt/UnrealEditor"),
+                "uproject": Path("/work/CarlaUnreal.uproject"),
+            },
+        )()
+        matching = (
+            "/opt/UnrealEditor /work/CarlaUnreal.uproject "
+            "-carla-rpc-port=2000"
+        )
+        with mock.patch.object(
+            LAUNCHER, "process_command", return_value=matching
+        ), mock.patch.object(
+            LAUNCHER, "wait_for_process_exit", return_value=True
+        ), mock.patch.object(LAUNCHER.os, "kill") as kill:
+            LAUNCHER.stop_reused_simulator(42, arguments, 2000)
+        kill.assert_called_once_with(42, LAUNCHER.signal.SIGINT)
 
     def test_startup_timeline_preserves_marks_from_both_layers(self):
         with tempfile.TemporaryDirectory() as directory:
