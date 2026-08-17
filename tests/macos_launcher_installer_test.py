@@ -91,6 +91,10 @@ class MacOSLauncherInstallerTests(unittest.TestCase):
                 "CARLA Manual Drive.app",
                 "io.github.alexmaninblack.carla-ego-runtime.manual-drive",
             ),
+            (
+                "CARLA Brake Event.app",
+                "io.github.alexmaninblack.carla-ego-runtime.brake-event",
+            ),
         ):
             app = self.desktop / app_name
             info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
@@ -107,13 +111,21 @@ class MacOSLauncherInstallerTests(unittest.TestCase):
 
         manual = (self.state / "launchers/manual-drive.command").read_text()
         route = (self.state / "launchers/route.command").read_text()
+        brake_event = (self.state / "launchers/brake-event.command").read_text()
         self.assertIn("config/m6_2_town10hd_handover.json", manual)
         self.assertIn("tools/launch_m6_1.py", manual)
         self.assertIn("config/m5_town10hd_route.json", route)
-        self.assertIn(str(self.python), manual + route)
+        self.assertIn("config/brake_event_town10hd.json", brake_event)
+        self.assertIn("tools/launch_brake_event_demo.py", brake_event)
+        self.assertNotIn("--dashboard-quiet", brake_event)
+        self.assertIn(str(self.python), manual + route + brake_event)
         self.assertNotIn("alexagizim", INSTALLER.read_text(encoding="utf-8"))
         self.assertEqual(
             stat.S_IMODE((self.state / "launchers/manual-drive.command").stat().st_mode),
+            0o700,
+        )
+        self.assertEqual(
+            stat.S_IMODE((self.state / "launchers/brake-event.command").stat().st_mode),
             0o700,
         )
 

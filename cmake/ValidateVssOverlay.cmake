@@ -12,7 +12,16 @@ foreach(path IN ITEMS
     "Vehicle.CarlaSimulation.FrameId:"
     "Vehicle.CarlaSimulation.SimulationTime:"
     "Vehicle.CarlaSimulation.GnssFrameId:"
-    "Vehicle.CarlaSimulation.GnssSimulationTime:")
+    "Vehicle.CarlaSimulation.GnssSimulationTime:"
+    "Vehicle.CarlaSimulation.ChaosWheel:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LateralSlipAngle:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LongitudinalSlip:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LateralSlipAngle:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LongitudinalSlip:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LateralSlipAngle:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LongitudinalSlip:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle:"
+    "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LongitudinalSlip:")
   string(FIND "${overlay}" "${path}" position)
   if(position EQUAL -1)
     message(FATAL_ERROR "VSS overlay is missing ${path}")
@@ -25,7 +34,7 @@ foreach(fragment IN ITEMS
     "datatype: double"
     "type: attribute"
     "type: sensor"
-    "default: \"0.1\""
+    "default: \"0.2\""
     "unit: s")
   string(FIND "${overlay}" "${fragment}" position)
   if(position EQUAL -1)

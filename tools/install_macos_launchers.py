@@ -30,6 +30,12 @@ APP_DEFINITIONS = (
         "io.github.alexmaninblack.carla-ego-runtime.manual-drive",
         "manual-drive.command",
     ),
+    (
+        "CARLA Brake Event.app",
+        "CARLA Brake Event",
+        "io.github.alexmaninblack.carla-ego-runtime.brake-event",
+        "brake-event.command",
+    ),
 )
 
 
@@ -180,6 +186,58 @@ exit ${{STATUS}}
 """
 
 
+def brake_event_command(arguments: argparse.Namespace) -> str:
+    brake_event_root = arguments.state_directory / "brake-event"
+    return f"""#!/bin/zsh
+
+set -u
+
+# Keep the engineering dashboard visible beside the simulator.
+print -n $'\\e[8;48;78t\\e[3;1090;45t'
+
+readonly RUNTIME_ROOT={quote(REPOSITORY)}
+readonly CARLA_ROOT={quote(arguments.carla_root)}
+readonly BUILD_ROOT={quote(arguments.build_root)}
+readonly PYTHON={quote(arguments.python)}
+readonly TLS_ROOT={quote(arguments.tls_root)}
+
+cd "${{RUNTIME_ROOT}}" || exit 1
+"${{PYTHON}}" tools/launch_brake_event_demo.py \\
+  --config config/brake_event_town10hd.json \\
+  --runtime "${{BUILD_ROOT}}/carla-ego-runtime" \\
+  --viss-client "${{BUILD_ROOT}}/carla-viss-client" \\
+  --python "${{PYTHON}}" \\
+  --python-api-root "${{CARLA_ROOT}}/PythonAPI/carla" \\
+  --certificate "${{TLS_ROOT}}/server-cert.pem" \\
+  --private-key "${{TLS_ROOT}}/server-key.pem" \\
+  --run-root {quote(brake_event_root / "runs")} \\
+  --unreal-editor {quote(arguments.unreal_editor)} \\
+  --uproject "${{CARLA_ROOT}}/Unreal/CarlaUnreal/CarlaUnreal.uproject" \\
+  --startup-map /Game/Carla/Maps/Town10HD_Opt \\
+  --unreal-argument=-game \\
+  --unreal-argument=-windowed \\
+  --unreal-argument=-ResX=1050 \\
+  --unreal-argument=-ResY=700 \\
+  --unreal-argument=-WinX=20 \\
+  --unreal-argument=-WinY=70 \\
+  --unreal-argument=-quality-level=Low \\
+  --unreal-argument=-nosound \\
+  --unreal-argument=-carla-rpc-port=2000 \\
+  --unreal-log {quote(brake_event_root / "unreal.log")}
+
+readonly STATUS=$?
+if [[ ${{STATUS}} -eq 0 ]]; then
+  print "\\nBrake-event scenario passed; CARLA cleanup is complete."
+elif [[ ${{STATUS}} -eq 130 ]]; then
+  print "\\nSession stopped by the operator; CARLA cleanup is complete."
+else
+  print "\\nCARLA brake-event launch failed. Exit code: ${{STATUS}}"
+fi
+print "You can close this window."
+exit ${{STATUS}}
+"""
+
+
 def app_executable(display_name: str, launcher: Path) -> str:
     return f"""#!/bin/zsh
 
@@ -303,10 +361,14 @@ def prepare_arguments(arguments: argparse.Namespace) -> argparse.Namespace:
     for relative_path, label in (
         ("tools/launch_m5.py", "M5 launcher"),
         ("tools/launch_m6_1.py", "M6.2 launcher"),
+        ("tools/launch_brake_event_demo.py", "brake-event launcher"),
+        ("tools/run_brake_event_demo.py", "brake-event runner"),
+        ("tools/brake_event_scenario.py", "brake-event controller"),
         ("tools/KeyboardControl.swift", "keyboard-control source"),
         ("tools/KeyboardControl-Info.plist", "keyboard-control metadata"),
         ("config/m5_town10hd_route.json", "M5 configuration"),
         ("config/m6_2_town10hd_handover.json", "M6.2 configuration"),
+        ("config/brake_event_town10hd.json", "brake-event configuration"),
     ):
         require_file(REPOSITORY / relative_path, label)
     if arguments.icon_source is None:
@@ -325,11 +387,14 @@ def install(arguments: argparse.Namespace) -> list[Path]:
     launchers = arguments.state_directory / "launchers"
     route_launcher = launchers / "route.command"
     manual_launcher = launchers / "manual-drive.command"
+    brake_event_launcher = launchers / "brake-event.command"
     atomic_write(route_launcher, route_command(arguments), 0o700)
     atomic_write(manual_launcher, manual_drive_command(arguments), 0o700)
+    atomic_write(brake_event_launcher, brake_event_command(arguments), 0o700)
     launcher_paths = {
         "route.command": route_launcher,
         "manual-drive.command": manual_launcher,
+        "brake-event.command": brake_event_launcher,
     }
 
     destinations = [arguments.install_directory / definition[0] for definition in APP_DEFINITIONS]
@@ -409,7 +474,8 @@ def main() -> int:
         for path in installed:
             print(f"  {path}")
         print(f"Private generated state: {arguments.state_directory}")
-        print("The Manual Drive launcher uses the accepted M6.2 live-handover workflow.")
+        print("Manual Drive uses the accepted M6.2 live-handover workflow.")
+        print("Brake Event opens its engineering dashboard in the launch Terminal.")
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"CARLA launcher installation failed: {error}", file=sys.stderr)

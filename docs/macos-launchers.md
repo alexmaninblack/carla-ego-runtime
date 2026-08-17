@@ -1,10 +1,12 @@
 # macOS desktop launchers
 
-`tools/install_macos_launchers.py` creates two signed application bundles:
+`tools/install_macos_launchers.py` creates three signed application bundles:
 
 - `CARLA Simulator.app` starts the repeatable M5 route and VISS dashboard;
 - `CARLA Manual Drive.app` starts the accepted M6.2 manual/autopilot handover
   workflow and VISS dashboard.
+- `CARLA Brake Event.app` runs the deterministic stationary-obstacle scenario
+  and keeps its expanded engineering telemetry dashboard visible in Terminal.
 
 The bundles contain only a generic wrapper and a CARLA icon. Machine-specific
 paths and generated launch commands are written outside the repository. TLS

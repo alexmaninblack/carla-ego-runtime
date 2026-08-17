@@ -27,6 +27,8 @@
 #include <carla/sensor/data/GnssMeasurement.h>
 #include <carla/trafficmanager/TrafficManager.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -48,6 +50,9 @@ namespace carla_ego_runtime {
 namespace {
 
 namespace cc = carla::client;
+
+using WheelRadii =
+    std::array<std::optional<double>, kRoadWheelCount>;
 
 volatile std::sig_atomic_t stop_requested = 0;
 
@@ -490,7 +495,8 @@ carla::SharedPtr<cc::Sensor> SpawnGnssSensor(cc::World &world,
 CarlaVehicleSample CollectSample(const cc::WorldSnapshot &snapshot,
                                  cc::Vehicle &vehicle,
                                  const std::string &run_id,
-                                 const SimulationClockAnchor &clock_anchor) {
+                                 const SimulationClockAnchor &clock_anchor,
+                                 const WheelRadii &wheel_radii) {
   const auto actor_snapshot = snapshot.Find(vehicle.GetId());
   if (!actor_snapshot.has_value()) {
     throw std::runtime_error(
@@ -522,6 +528,16 @@ CarlaVehicleSample CollectSample(const cc::WorldSnapshot &snapshot,
       vehicle.GetWheelSteerAngle(cc::Vehicle::WheelLocation::FL_Wheel);
   sample.front_right_wheel_angle_carla_deg =
       vehicle.GetWheelSteerAngle(cc::Vehicle::WheelLocation::FR_Wheel);
+  const auto available_wheels =
+      std::min(telemetry.wheels.size(), sample.wheels.size());
+  for (std::size_t index = 0; index < available_wheels; ++index) {
+    sample.wheels[index].angular_speed_rad_s = telemetry.wheels[index].omega;
+    sample.wheels[index].radius_m = wheel_radii[index];
+    sample.wheels[index].lateral_slip_angle_deg =
+        telemetry.wheels[index].lat_slip;
+    sample.wheels[index].longitudinal_slip =
+        telemetry.wheels[index].long_slip;
+  }
   return sample;
 }
 
@@ -572,6 +588,18 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
   ConfigureStopSignals();
   const auto started_at = std::chrono::steady_clock::now();
   const auto run_id = GenerateRunId();
+  WheelRadii wheel_radii;
+  const auto physics = vehicle->GetPhysicsControl();
+  const auto available_wheel_radii =
+      std::min(physics.wheels.size(), wheel_radii.size());
+  for (std::size_t index = 0; index < available_wheel_radii; ++index) {
+    const double radius_m = physics.wheels[index].wheel_radius / 100.0;
+    if (std::isfinite(radius_m) && radius_m > 0.0) {
+      wheel_radii[index] = radius_m;
+    }
+  }
+  std::cout << "Chaos wheel telemetry: " << available_wheel_radii
+            << " configured road wheel(s)\n";
   std::optional<SimulationClockAnchor> clock_anchor;
   LatestGnssFixStore gnss_store;
   auto gnss_sensor =
@@ -648,7 +676,8 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     }
 
     const auto normalized = NormalizeVehicleSample(
-        CollectSample(snapshot, *vehicle, run_id, *clock_anchor));
+        CollectSample(snapshot, *vehicle, run_id, *clock_anchor,
+                      wheel_radii));
     std::optional<NormalizedGnssFix> normalized_gnss;
     const auto gnss_sample =
         gnss_store.LatestFor(normalized.frame_id, normalized.simulation_time_s,

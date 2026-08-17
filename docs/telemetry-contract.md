@@ -1,4 +1,4 @@
-# VISS/VSS telemetry contract v0.1
+# VISS/VSS telemetry contract v0.2
 
 Status: **implemented for the M4 vehicle-state, GNSS, and VISS network subset**.
 
@@ -31,6 +31,8 @@ subset is defined in the [VISS compatibility profile](viss-profile.md).
 | `Vehicle.Chassis.Axle.Row1.SteeringAngle` | `float`, degrees | Equivalent single-track front-axle angle derived from the actual left and right front road-wheel angles; positive left and negative right. |
 | `Vehicle.Powertrain.Transmission.CurrentGear` | `int8` | CARLA current gear: zero neutral, positive forward, negative reverse. |
 | `Vehicle.Powertrain.CombustionEngine.Speed` | `float`, rpm | CARLA simulated engine speed when the selected vehicle exposes it. Omitted or marked unavailable otherwise. |
+| `Vehicle.Chassis.Axle.Row{1,2}.Wheel.{Left,Right}.AngularSpeed` | `float`, rad/s | Magnitude of the live Unreal Chaos wheel angular velocity. CARLA wheel order is validated as front-left, front-right, rear-left, rear-right. |
+| `Vehicle.Chassis.Axle.Row{1,2}.Wheel.{Left,Right}.Speed` | `float`, km/h | Non-negative linear wheel speed derived from live angular speed and that wheel's configured physical radius. |
 | `Vehicle.CurrentLocation.Latitude` | `double`, degrees | CARLA GNSS latitude. |
 | `Vehicle.CurrentLocation.Longitude` | `double`, degrees | CARLA GNSS longitude. |
 | `Vehicle.CurrentLocation.Altitude` | `double`, m | CARLA GNSS altitude. |
@@ -75,13 +77,15 @@ The following project-owned paths extend, but do not modify, VSS 6.0:
 
 | Extension path | Type and unit | Meaning |
 | --- | --- | --- |
-| `Vehicle.CarlaSimulation.ProfileVersion` | `string` attribute | Version of this compatibility profile, initially `0.1`. |
+| `Vehicle.CarlaSimulation.ProfileVersion` | `string` attribute | Version of this compatibility profile, currently `0.2`. |
 | `Vehicle.CarlaSimulation.RunId` | `string` sensor | Unique identifier of one simulator run. |
 | `Vehicle.CarlaSimulation.EgoVehicleId` | `string` sensor | Stable ego-vehicle identifier within the run. |
 | `Vehicle.CarlaSimulation.FrameId` | `uint64` sensor | CARLA simulation frame represented by the sample. |
 | `Vehicle.CarlaSimulation.SimulationTime` | `double`, s | Exact CARLA elapsed simulation time. |
 | `Vehicle.CarlaSimulation.GnssFrameId` | `uint64` sensor | Source CARLA frame of the retained GNSS fix. |
 | `Vehicle.CarlaSimulation.GnssSimulationTime` | `double`, s | Source CARLA simulation time of the retained GNSS fix. |
+| `Vehicle.CarlaSimulation.ChaosWheel.Row{1,2}.{Left,Right}.LateralSlipAngle` | `double`, degrees | Signed lateral slip angle reported by the live Chaos wheel state. This is simulator-specific and is not claimed to be a standard VSS signal. |
+| `Vehicle.CarlaSimulation.ChaosWheel.Row{1,2}.{Left,Right}.LongitudinalSlip` | `double` | Longitudinal slip magnitude reported by the live Chaos wheel state. This is simulator-specific and is not claimed to be a standard VSS signal. |
 
 The versioned artifact is
 [`vss/Vehicle.CarlaSimulation.vspec`](../vss/Vehicle.CarlaSimulation.vspec).
@@ -115,6 +119,9 @@ unavailable RPM and equivalent steering are omitted from the frame snapshot.
 Missing, future, malformed, out-of-order, or stale GNSS fixes are likewise
 omitted rather than replaced by zero coordinates. The GNSS callback handoff
 retains at most one ordered fix and exposes accepted/rejected counters.
+Missing, non-finite, or structurally incomplete wheel telemetry is also
+omitted per wheel. A missing wheel never becomes a plausible zero-speed or
+zero-slip sample.
 Read of an absent path returns VISS `404 unavailable_data`; optional points
 appear automatically in later snapshots when their source is available.
 

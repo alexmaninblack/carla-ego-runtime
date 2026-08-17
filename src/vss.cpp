@@ -1,6 +1,7 @@
 #include "carla_ego_runtime/vss.hpp"
 
 #include <chrono>
+#include <array>
 #include <cmath>
 #include <ctime>
 #include <iomanip>
@@ -11,7 +12,33 @@
 namespace carla_ego_runtime {
 namespace {
 
-constexpr std::string_view kProfileVersion = "0.1";
+constexpr std::string_view kProfileVersion = "0.2";
+
+struct WheelPaths {
+  std::string_view angular_speed;
+  std::string_view linear_speed;
+  std::string_view lateral_slip_angle;
+  std::string_view longitudinal_slip;
+};
+
+constexpr std::array<WheelPaths, kRoadWheelCount> kWheelPaths{{
+    {"Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed",
+     "Vehicle.Chassis.Axle.Row1.Wheel.Left.Speed",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LateralSlipAngle",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LongitudinalSlip"},
+    {"Vehicle.Chassis.Axle.Row1.Wheel.Right.AngularSpeed",
+     "Vehicle.Chassis.Axle.Row1.Wheel.Right.Speed",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LateralSlipAngle",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LongitudinalSlip"},
+    {"Vehicle.Chassis.Axle.Row2.Wheel.Left.AngularSpeed",
+     "Vehicle.Chassis.Axle.Row2.Wheel.Left.Speed",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LateralSlipAngle",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LongitudinalSlip"},
+    {"Vehicle.Chassis.Axle.Row2.Wheel.Right.AngularSpeed",
+     "Vehicle.Chassis.Axle.Row2.Wheel.Right.Speed",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle",
+     "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LongitudinalSlip"},
+}};
 
 void Add(VssSnapshot &snapshot, std::string path, VssValue value) {
   snapshot.data_points.push_back(
@@ -80,6 +107,25 @@ VssSnapshot ProjectToVss(
   if (state.engine_rpm.has_value()) {
     Add(snapshot, "Vehicle.Powertrain.CombustionEngine.Speed",
         *state.engine_rpm);
+  }
+  for (std::size_t index = 0; index < state.wheels.size(); ++index) {
+    const auto &wheel = state.wheels[index];
+    const auto &paths = kWheelPaths[index];
+    if (wheel.angular_speed_rad_s.has_value()) {
+      Add(snapshot, std::string(paths.angular_speed),
+          *wheel.angular_speed_rad_s);
+    }
+    if (wheel.speed_kmh.has_value()) {
+      Add(snapshot, std::string(paths.linear_speed), *wheel.speed_kmh);
+    }
+    if (wheel.lateral_slip_angle_deg.has_value()) {
+      Add(snapshot, std::string(paths.lateral_slip_angle),
+          *wheel.lateral_slip_angle_deg);
+    }
+    if (wheel.longitudinal_slip.has_value()) {
+      Add(snapshot, std::string(paths.longitudinal_slip),
+          *wheel.longitudinal_slip);
+    }
   }
   Add(snapshot, "Vehicle.CarlaSimulation.ProfileVersion",
       std::string(kProfileVersion));

@@ -96,7 +96,7 @@ class M5ToolTests(unittest.TestCase):
         invalid = json.loads(json.dumps(self.config))
         invalid["controller"]["type"] = "implicit"
         with self.assertRaisesRegex(
-            CONTROLLER.ConfigurationError, "behavior_agent or external_control"
+            CONTROLLER.ConfigurationError, "behavior_agent, brake_event_scenario"
         ):
             CONTROLLER.validate_config(invalid)
 

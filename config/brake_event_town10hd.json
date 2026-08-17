@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "controller": {
+    "type": "brake_event_scenario",
+    "scenario": {
+      "id": "stationary-obstacle-braking-v1",
+      "target_speed_kmh": 20,
+      "target_speed_tolerance_kmh": 1.0,
+      "acceleration_throttle": 0.45,
+      "speed_control_gain": 0.04,
+      "lookahead_distance_m": 6.0,
+      "maximum_steering": 0.45,
+      "stabilization_seconds": 1.0,
+      "brake_trigger_gap_m": 13.0,
+      "brake_command": 0.75,
+      "stopped_speed_kmh": 0.3,
+      "stopped_frames": 12,
+      "hold_seconds": 2.0,
+      "minimum_stop_gap_m": 2.0,
+      "maximum_stop_gap_m": 11.0,
+      "minimum_peak_deceleration_mps2": 2.5,
+      "maximum_duration_seconds": 40,
+      "obstacle": {
+        "blueprint": "vehicle.lincoln.mkz",
+        "role_name": "brake_health_obstacle",
+        "distance_m": 70.0,
+        "spawn_height_m": 0.35
+      }
+    }
+  },
+  "carla": {
+    "host": "127.0.0.1",
+    "port": 2000,
+    "timeout_seconds": 20,
+    "expected_map": "Carla/Maps/Town10HD_Opt",
+    "source_commit": "385927b6ac5efaaa204b5b9853a7aaa5c5917428"
+  },
+  "simulation": {
+    "fixed_delta_seconds": 0.03333333333333333,
+    "real_time": true,
+    "maximum_route_seconds": 40,
+    "startup_gate_timeout_seconds": 60,
+    "shutdown_gate_timeout_seconds": 30
+  },
+  "vehicle": {
+    "blueprint": "vehicle.lincoln.mkz",
+    "role_name": "hero"
+  },
+  "route": {
+    "name": "town10_stationary_obstacle_braking",
+    "start_spawn_point": 40,
+    "destination_spawn_points": [0],
+    "cycles": 1,
+    "minimum_leg_distance_m": 50
+  },
+  "runtime": {
+    "viss_bind_address": "127.0.0.1",
+    "viss_port": 6443,
+    "log_every_frames": 30,
+    "dashboard_period_ms": 100,
+    "chase_camera": true,
+    "chase_camera_response": 8,
+    "chase_camera_update_hz": 30,
+    "exposure_offset": -0.35
+  }
+}

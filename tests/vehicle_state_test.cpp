@@ -4,6 +4,7 @@
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -47,6 +48,8 @@ carla_ego_runtime::CarlaVehicleSample ValidSample() {
   sample.engine_rpm = 1500.0;
   sample.front_left_wheel_angle_carla_deg = -12.0;
   sample.front_right_wheel_angle_carla_deg = -10.0;
+  sample.wheels[0] = {-20.0, 0.33, -1.5, 0.2};
+  sample.wheels[1] = {20.0, 0.33, 1.5, 0.25};
   return sample;
 }
 
@@ -72,6 +75,14 @@ int main() {
   Check(*state.equivalent_front_axle_angle_iso_deg > 10.0 &&
             *state.equivalent_front_axle_angle_iso_deg < 12.0,
         "equivalent steering lies between road-wheel angles");
+  Check(state.wheels[0].angular_speed_rad_s == 20.0,
+        "wheel angular speed is normalized to a magnitude");
+  CheckNear(*state.wheels[0].speed_kmh, 23.76, 1.0e-12,
+            "wheel angular speed and radius produce linear speed");
+  Check(state.wheels[0].lateral_slip_angle_deg == -1.5,
+        "signed lateral slip angle is retained");
+  Check(state.wheels[1].longitudinal_slip == 0.25,
+        "longitudinal slip is retained");
 
   const auto equal_angle = EquivalentFrontAxleAngleDegrees(-15.0, -15.0);
   Check(equal_angle.has_value(), "equal wheel angles accepted");
@@ -94,6 +105,17 @@ int main() {
   invalid.engine_rpm = -1.0;
   Check(!NormalizeVehicleSample(invalid).engine_rpm.has_value(),
         "invalid optional RPM omitted instead of replaced by zero");
+  invalid = ValidSample();
+  invalid.wheels[0].radius_m = -0.1;
+  Check(!NormalizeVehicleSample(invalid).wheels[0].speed_kmh.has_value(),
+        "invalid wheel radius omits derived linear speed");
+  invalid = ValidSample();
+  invalid.wheels[0].angular_speed_rad_s =
+      std::numeric_limits<double>::quiet_NaN();
+  Check(!NormalizeVehicleSample(invalid)
+             .wheels[0]
+             .angular_speed_rad_s.has_value(),
+        "non-finite optional wheel telemetry is omitted");
 
   const auto anchor_time = std::chrono::system_clock::time_point{} +
                            std::chrono::seconds(100);

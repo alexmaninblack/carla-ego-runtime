@@ -47,6 +47,8 @@ int main() {
   state.gear = -1;
   state.engine_rpm = 1200.0;
   state.equivalent_front_axle_angle_iso_deg = 7.5;
+  state.wheels[0] = {20.0, 23.76, -1.5, 0.2};
+  state.wheels[1] = {21.0, 24.95, 1.5, 0.25};
 
   NormalizedGnssFix gnss;
   gnss.source_frame_id = 98;
@@ -75,6 +77,27 @@ int main() {
         "gear projected as signed integer");
   Check(Find(snapshot, "Vehicle.Chassis.Axle.Row1.SteeringAngle") != nullptr,
         "equivalent axle steering projected");
+  Check(std::get<double>(
+            Find(snapshot,
+                 "Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed")
+                ->value) == 20.0,
+        "standard wheel angular speed projected");
+  Check(std::get<double>(
+            Find(snapshot, "Vehicle.Chassis.Axle.Row1.Wheel.Left.Speed")
+                ->value) == 23.76,
+        "standard wheel linear speed projected");
+  Check(std::get<double>(
+            Find(snapshot,
+                 "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left."
+                 "LateralSlipAngle")
+                ->value) == -1.5,
+        "simulator-specific lateral slip projected");
+  Check(std::get<double>(
+            Find(snapshot,
+                 "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right."
+                 "LongitudinalSlip")
+                ->value) == 0.25,
+        "simulator-specific longitudinal slip projected");
   Check(std::get<double>(
             Find(snapshot, "Vehicle.CurrentLocation.Latitude")->value) ==
             52.520008,

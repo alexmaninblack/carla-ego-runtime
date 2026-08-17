@@ -8,7 +8,7 @@ Vehicle.CarlaSimulation:
 Vehicle.CarlaSimulation.ProfileVersion:
   datatype: string
   type: attribute
-  default: "0.1"
+  default: "0.2"
   description: Version of the CARLA VISS compatibility profile.
 
 Vehicle.CarlaSimulation.RunId:
@@ -46,3 +46,75 @@ Vehicle.CarlaSimulation.GnssSimulationTime:
   unit: s
   min: 0
   description: CARLA source simulation time of the retained GNSS fix.
+
+Vehicle.CarlaSimulation.ChaosWheel:
+  type: branch
+  description: Simulator-specific live wheel dynamics from the Unreal Chaos solver.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1:
+  type: branch
+  description: Simulator-specific front axle wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Left:
+  type: branch
+  description: Simulator-specific front-left wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LateralSlipAngle:
+  datatype: double
+  type: sensor
+  unit: degrees
+  description: Live Chaos lateral slip angle for the front-left wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LongitudinalSlip:
+  datatype: double
+  type: sensor
+  description: Live Chaos longitudinal slip magnitude for the front-left wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Right:
+  type: branch
+  description: Simulator-specific front-right wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LateralSlipAngle:
+  datatype: double
+  type: sensor
+  unit: degrees
+  description: Live Chaos lateral slip angle for the front-right wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LongitudinalSlip:
+  datatype: double
+  type: sensor
+  description: Live Chaos longitudinal slip magnitude for the front-right wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2:
+  type: branch
+  description: Simulator-specific rear axle wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Left:
+  type: branch
+  description: Simulator-specific rear-left wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LateralSlipAngle:
+  datatype: double
+  type: sensor
+  unit: degrees
+  description: Live Chaos lateral slip angle for the rear-left wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LongitudinalSlip:
+  datatype: double
+  type: sensor
+  description: Live Chaos longitudinal slip magnitude for the rear-left wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Right:
+  type: branch
+  description: Simulator-specific rear-right wheel dynamics.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle:
+  datatype: double
+  type: sensor
+  unit: degrees
+  description: Live Chaos lateral slip angle for the rear-right wheel.
+
+Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LongitudinalSlip:
+  datatype: double
+  type: sensor
+  description: Live Chaos longitudinal slip magnitude for the rear-right wheel.

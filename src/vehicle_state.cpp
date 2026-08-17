@@ -39,6 +39,28 @@ std::optional<double> NormalizeWheelAngle(
   return -*carla_angle_deg;
 }
 
+std::optional<double> FiniteValue(const std::optional<double> &value) {
+  return value.has_value() && std::isfinite(*value) ? value : std::nullopt;
+}
+
+NormalizedWheelState NormalizeWheelState(const CarlaWheelSample &sample) {
+  NormalizedWheelState wheel;
+  if (const auto angular_speed = FiniteValue(sample.angular_speed_rad_s);
+      angular_speed.has_value()) {
+    // Wheel orientation can make the solver sign vehicle-specific. VSS wheel
+    // speed is a magnitude, so expose a stable non-negative angular speed.
+    wheel.angular_speed_rad_s = std::abs(*angular_speed);
+    if (const auto radius = FiniteValue(sample.radius_m);
+        radius.has_value() && *radius > 0.0) {
+      wheel.speed_kmh = std::abs(*angular_speed) * *radius * 3.6;
+    }
+  }
+  wheel.lateral_slip_angle_deg =
+      FiniteValue(sample.lateral_slip_angle_deg);
+  wheel.longitudinal_slip = FiniteValue(sample.longitudinal_slip);
+  return wheel;
+}
+
 }  // namespace
 
 std::optional<double> EquivalentFrontAxleAngleDegrees(
@@ -133,6 +155,9 @@ NormalizedVehicleState NormalizeVehicleSample(const CarlaVehicleSample &sample) 
         EquivalentFrontAxleAngleDegrees(
             *state.front_left_wheel_angle_iso_deg,
             *state.front_right_wheel_angle_iso_deg);
+  }
+  for (std::size_t index = 0; index < state.wheels.size(); ++index) {
+    state.wheels[index] = NormalizeWheelState(sample.wheels[index]);
   }
   return state;
 }

@@ -145,11 +145,23 @@ std::string BuildMonitorRequest(std::uint32_t period_ms) {
            "Chassis.Accelerator.PedalPosition",
            "Chassis.Brake.PedalPosition",
            "Chassis.Axle.Row1.SteeringAngle",
+           "Chassis.Axle.Row1.Wheel.Left.AngularSpeed",
+           "Chassis.Axle.Row1.Wheel.Left.Speed",
+           "Chassis.Axle.Row1.Wheel.Right.AngularSpeed",
+           "Chassis.Axle.Row1.Wheel.Right.Speed",
+           "Chassis.Axle.Row2.Wheel.Left.AngularSpeed",
+           "Chassis.Axle.Row2.Wheel.Left.Speed",
+           "Chassis.Axle.Row2.Wheel.Right.AngularSpeed",
+           "Chassis.Axle.Row2.Wheel.Right.Speed",
            "Powertrain.Transmission.CurrentGear",
            "Powertrain.CombustionEngine.Speed",
            "CurrentLocation.*",
            "CarlaSimulation.FrameId",
            "CarlaSimulation.SimulationTime",
+           "CarlaSimulation.ChaosWheel.Row1.Left.*",
+           "CarlaSimulation.ChaosWheel.Row1.Right.*",
+           "CarlaSimulation.ChaosWheel.Row2.Left.*",
+           "CarlaSimulation.ChaosWheel.Row2.Right.*",
        }) {
     paths.emplace_back(path);
   }
@@ -390,6 +402,75 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
       << "Brake       " << Bar(signals, "Vehicle.Chassis.Brake.PedalPosition")
       << ' ' << std::setw(3)
       << Value(signals, "Vehicle.Chassis.Brake.PedalPosition", "0") << "%\n\n"
+      << "WHEEL DYNAMICS     FL       FR       RL       RR\n"
+      << "Speed km/h       " << std::setw(7)
+      << NumberText(signals, "Vehicle.Chassis.Axle.Row1.Wheel.Left.Speed", 1)
+      << "  " << std::setw(7)
+      << NumberText(signals, "Vehicle.Chassis.Axle.Row1.Wheel.Right.Speed", 1)
+      << "  " << std::setw(7)
+      << NumberText(signals, "Vehicle.Chassis.Axle.Row2.Wheel.Left.Speed", 1)
+      << "  " << std::setw(7)
+      << NumberText(signals, "Vehicle.Chassis.Axle.Row2.Wheel.Right.Speed", 1)
+      << '\n'
+      << "Angular rad/s    " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed", 1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.Chassis.Axle.Row1.Wheel.Right.AngularSpeed", 1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.Chassis.Axle.Row2.Wheel.Left.AngularSpeed", 1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.Chassis.Axle.Row2.Wheel.Right.AngularSpeed", 1)
+      << '\n'
+      << "Longitudinal slip" << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LongitudinalSlip",
+             2)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LongitudinalSlip",
+             2)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LongitudinalSlip",
+             2)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LongitudinalSlip",
+             2)
+      << '\n'
+      << "Lateral slip deg " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LateralSlipAngle",
+             1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row1.Right.LateralSlipAngle",
+             1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LateralSlipAngle",
+             1)
+      << "  " << std::setw(7)
+      << NumberText(
+             signals,
+             "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle",
+             1)
+      << "\n\n"
       << "GNSS latitude     "
       << NumberText(signals, "Vehicle.CurrentLocation.Latitude", 6) << '\n'
       << "GNSS longitude    "

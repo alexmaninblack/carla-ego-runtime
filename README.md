@@ -25,7 +25,8 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   settings on exit;
 - optional wall-clock pacing for smooth real-time visualization;
 - optional synchronous Traffic Manager autopilot and chase-camera demo mode;
-- frame-aligned speed, acceleration, pedal, steering, gear, and RPM sampling;
+- frame-aligned speed, acceleration, pedal, steering, gear, RPM, and four-wheel
+  Chaos dynamics sampling;
 - an attached 10 Hz GNSS sensor with source-frame ordering, freshness checks,
   and independent data-point timestamps;
 - transport-independent normalization and VSS 6.0 projection;
@@ -46,6 +47,9 @@ vehicle telemetry through the COVESA Vehicle Information Service Specification
   full-brake safe stop on timeout, release, disconnect, or shutdown;
 - live M6.2 switching among manual control, synchronous Traffic Manager
   autopilot, and safe stop without replacing the vehicle or interrupting VISS.
+- a deterministic stationary-obstacle braking scenario with a single tick
+  owner, explicit phases, collision monitoring, machine-readable acceptance,
+  and the same live engineering dashboard.
 
 Run `carla-ego-runtime --help` for all connection and vehicle options.
 
@@ -60,7 +64,10 @@ and GNSS:
 - equivalent front-axle steering angle;
 - current gear and engine speed;
 - GNSS latitude, longitude, and altitude;
-- simulation run, frame, and time metadata.
+- simulation run, frame, and time metadata;
+- front-left, front-right, rear-left, and rear-right wheel angular and linear
+  speed;
+- CARLA-specific longitudinal slip and lateral slip angle for the same wheels.
 
 The external contract is a documented profile of
 [COVESA VISS 3.1](https://github.com/COVESA/vehicle-information-service-specification/tree/v3.1)
@@ -197,8 +204,13 @@ owner remain active through every handover, while the terminal VSS dashboard
 continues to show live telemetry. See
 [M6.2 live handover](docs/m6-2-live-handover.md).
 
+For the CARLA-only obstacle and braking-event workflow, see
+[deterministic brake-event scenario](docs/brake-event-scenario.md). This path
+does not require AosEdge, KUKSA, a vehicle-data provider, or Cloud access.
+
 For reproducible signed Desktop applications that start the accepted M5 and
-M6.2 workflows, see [macOS desktop launchers](docs/macos-launchers.md).
+M6.2 workflows or the deterministic brake event with a visible engineering
+dashboard, see [macOS desktop launchers](docs/macos-launchers.md).
 
 ## Documentation
 
@@ -213,6 +225,7 @@ M6.2 workflows, see [macOS desktop launchers](docs/macos-launchers.md).
 - [M6 external-control operations and acceptance](docs/m6-operations.md)
 - [M6.1 keyboard driving](docs/m6-1-keyboard-driving.md)
 - [M6.2 live handover](docs/m6-2-live-handover.md)
+- [Deterministic brake-event scenario](docs/brake-event-scenario.md)
 - [macOS desktop launchers](docs/macos-launchers.md)
 - [Public repository policy](docs/public-repository-policy.md)
 - [Architecture decisions](docs/decisions/)

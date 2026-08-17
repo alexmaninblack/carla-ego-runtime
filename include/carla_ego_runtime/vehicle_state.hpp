@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -11,6 +13,26 @@ struct Vector3 {
   double x = 0.0;
   double y = 0.0;
   double z = 0.0;
+};
+
+inline constexpr std::size_t kRoadWheelCount = 4;
+
+// CARLA/Chaos reports wheels in FL, FR, RL, RR order. The radius is retained
+// with each live solver sample so the normalization boundary can project both
+// angular and linear wheel speed without relying on a vehicle-specific
+// constant.
+struct CarlaWheelSample {
+  std::optional<double> angular_speed_rad_s;
+  std::optional<double> radius_m;
+  std::optional<double> lateral_slip_angle_deg;
+  std::optional<double> longitudinal_slip;
+};
+
+struct NormalizedWheelState {
+  std::optional<double> angular_speed_rad_s;
+  std::optional<double> speed_kmh;
+  std::optional<double> lateral_slip_angle_deg;
+  std::optional<double> longitudinal_slip;
 };
 
 // Transport-independent input to the normalization boundary. Acceleration is
@@ -30,6 +52,7 @@ struct CarlaVehicleSample {
   std::optional<double> engine_rpm;
   std::optional<double> front_left_wheel_angle_carla_deg;
   std::optional<double> front_right_wheel_angle_carla_deg;
+  std::array<CarlaWheelSample, kRoadWheelCount> wheels;
 };
 
 struct NormalizedVehicleState {
@@ -48,6 +71,7 @@ struct NormalizedVehicleState {
   std::optional<double> front_left_wheel_angle_iso_deg;
   std::optional<double> front_right_wheel_angle_iso_deg;
   std::optional<double> equivalent_front_axle_angle_iso_deg;
+  std::array<NormalizedWheelState, kRoadWheelCount> wheels;
 };
 
 // Returns the equivalent single-track road-wheel angle. Positive is left,

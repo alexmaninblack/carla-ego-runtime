@@ -236,6 +236,12 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_2_handover_test.py"
     )
     add_test(
+      NAME brake_event_scenario
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/brake_event_scenario_test.py"
+    )
+    add_test(
       NAME product_language
       COMMAND
         "${Python3_EXECUTABLE}"
