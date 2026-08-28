@@ -74,7 +74,8 @@ rendering with `--dashboard-quiet`.
 The dashboard retains the original speed, acceleration, steering, pedal, gear,
 RPM, and GNSS views and adds a four-column `FL / FR / RL / RR` wheel table:
 
-- standard VSS wheel angular speed in rad/s;
+- standard VSS wheel angular speed in degrees per second, converted at the VSS
+  projection boundary from the runtime's normalized radians-per-second sample;
 - standard VSS linear wheel speed in km/h;
 - simulator-specific live Chaos longitudinal slip;
 - simulator-specific live Chaos lateral slip angle in degrees.

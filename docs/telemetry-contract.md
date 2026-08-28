@@ -31,7 +31,7 @@ subset is defined in the [VISS compatibility profile](viss-profile.md).
 | `Vehicle.Chassis.Axle.Row1.SteeringAngle` | `float`, degrees | Equivalent single-track front-axle angle derived from the actual left and right front road-wheel angles; positive left and negative right. |
 | `Vehicle.Powertrain.Transmission.CurrentGear` | `int8` | CARLA current gear: zero neutral, positive forward, negative reverse. |
 | `Vehicle.Powertrain.CombustionEngine.Speed` | `float`, rpm | CARLA simulated engine speed when the selected vehicle exposes it. Omitted or marked unavailable otherwise. |
-| `Vehicle.Chassis.Axle.Row{1,2}.Wheel.{Left,Right}.AngularSpeed` | `float`, rad/s | Magnitude of the live Unreal Chaos wheel angular velocity. CARLA wheel order is validated as front-left, front-right, rear-left, rear-right. |
+| `Vehicle.Chassis.Axle.Row{1,2}.Wheel.{Left,Right}.AngularSpeed` | `float`, degrees/s | Magnitude of the live Unreal Chaos wheel angular velocity, converted from the normalized rad/s sample to degrees/s (`x 180/pi`) only at the VSS projection boundary. CARLA wheel order is validated as front-left, front-right, rear-left, rear-right. |
 | `Vehicle.Chassis.Axle.Row{1,2}.Wheel.{Left,Right}.Speed` | `float`, km/h | Non-negative linear wheel speed derived from live angular speed and that wheel's configured physical radius. |
 | `Vehicle.CurrentLocation.Latitude` | `double`, degrees | CARLA GNSS latitude. |
 | `Vehicle.CurrentLocation.Longitude` | `double`, degrees | CARLA GNSS longitude. |

@@ -13,6 +13,8 @@ namespace carla_ego_runtime {
 namespace {
 
 constexpr std::string_view kProfileVersion = "0.2";
+constexpr double kRadiansToDegrees =
+    180.0 / 3.141592653589793238462643383279502884;
 
 struct WheelPaths {
   std::string_view angular_speed;
@@ -113,7 +115,7 @@ VssSnapshot ProjectToVss(
     const auto &paths = kWheelPaths[index];
     if (wheel.angular_speed_rad_s.has_value()) {
       Add(snapshot, std::string(paths.angular_speed),
-          *wheel.angular_speed_rad_s);
+          *wheel.angular_speed_rad_s * kRadiansToDegrees);
     }
     if (wheel.speed_kmh.has_value()) {
       Add(snapshot, std::string(paths.linear_speed), *wheel.speed_kmh);

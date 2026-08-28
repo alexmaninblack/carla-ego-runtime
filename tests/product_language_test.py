@@ -42,6 +42,13 @@ class ProductLanguageTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(REPOSITORY)}:{line_number}")
         self.assertEqual(violations, [], "Cyrillic product text found")
 
+    def test_wheel_angular_speed_label_uses_vss_units(self):
+        source = (REPOSITORY / "src" / "viss_client.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Angular deg/s", source)
+        self.assertNotIn("Angular rad/s", source)
+
 
 if __name__ == "__main__":
     unittest.main()

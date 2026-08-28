@@ -412,7 +412,7 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
       << "  " << std::setw(7)
       << NumberText(signals, "Vehicle.Chassis.Axle.Row2.Wheel.Right.Speed", 1)
       << '\n'
-      << "Angular rad/s    " << std::setw(7)
+      << "Angular deg/s    " << std::setw(7)
       << NumberText(
              signals,
              "Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed", 1)

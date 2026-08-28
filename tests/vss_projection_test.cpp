@@ -18,6 +18,11 @@ void Check(bool condition, const std::string &message) {
   }
 }
 
+void CheckNear(double actual, double expected, double tolerance,
+               const std::string &message) {
+  Check(std::abs(actual - expected) <= tolerance, message);
+}
+
 const carla_ego_runtime::VssDataPoint *Find(
     const carla_ego_runtime::VssSnapshot &snapshot, const std::string &path) {
   for (const auto &point : snapshot.data_points) {
@@ -77,11 +82,12 @@ int main() {
         "gear projected as signed integer");
   Check(Find(snapshot, "Vehicle.Chassis.Axle.Row1.SteeringAngle") != nullptr,
         "equivalent axle steering projected");
-  Check(std::get<double>(
-            Find(snapshot,
-                 "Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed")
-                ->value) == 20.0,
-        "standard wheel angular speed projected");
+  CheckNear(std::get<double>(
+                Find(snapshot,
+                     "Vehicle.Chassis.Axle.Row1.Wheel.Left.AngularSpeed")
+                    ->value),
+            1145.9155902616465, 1.0e-12,
+            "standard wheel angular speed converted from rad/s to deg/s");
   Check(std::get<double>(
             Find(snapshot, "Vehicle.Chassis.Axle.Row1.Wheel.Left.Speed")
                 ->value) == 23.76,
