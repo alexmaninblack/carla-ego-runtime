@@ -53,6 +53,33 @@ void AddAt(VssSnapshot &snapshot, std::string path, VssValue value,
                                   FormatIso8601Utc(timestamp_utc)});
 }
 
+std::optional<std::string_view> DriveModeName(SimulatorDriveMode mode) {
+  switch (mode) {
+    case SimulatorDriveMode::kSafeStop:
+      return std::string_view{"SAFE_STOP"};
+    case SimulatorDriveMode::kScenario:
+      return std::string_view{"SCENARIO"};
+    case SimulatorDriveMode::kManual:
+      return std::string_view{"MANUAL"};
+    case SimulatorDriveMode::kAutopilot:
+      return std::string_view{"AUTOPILOT"};
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string_view>
+TransitionStateName(SimulatorTransitionState state) {
+  switch (state) {
+    case SimulatorTransitionState::kStable:
+      return std::string_view{"STABLE"};
+    case SimulatorTransitionState::kPreparing:
+      return std::string_view{"PREPARING"};
+    case SimulatorTransitionState::kFailed:
+      return std::string_view{"FAILED"};
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 std::string FormatIso8601Utc(
@@ -83,7 +110,8 @@ std::string FormatIso8601Utc(
 
 VssSnapshot ProjectToVss(
     const NormalizedVehicleState &state,
-    const std::optional<NormalizedGnssFix> &gnss_fix) {
+    const std::optional<NormalizedGnssFix> &gnss_fix,
+    const std::optional<SimulatorControlFacts> &control_facts) {
   VssSnapshot snapshot;
   snapshot.frame_id = state.frame_id;
   snapshot.simulation_time_s = state.simulation_time_s;
@@ -137,6 +165,26 @@ VssSnapshot ProjectToVss(
   Add(snapshot, "Vehicle.CarlaSimulation.FrameId", state.frame_id);
   Add(snapshot, "Vehicle.CarlaSimulation.SimulationTime",
       state.simulation_time_s);
+  if (control_facts.has_value() &&
+      control_facts->source_frame_id == state.frame_id) {
+    const auto drive_mode = DriveModeName(control_facts->active_mode);
+    const auto transition_state =
+        TransitionStateName(control_facts->transition_state);
+    if (drive_mode.has_value() && transition_state.has_value()) {
+      Add(snapshot, "Vehicle.CarlaSimulation.Control.ActiveMode",
+          std::string(*drive_mode));
+      Add(snapshot, "Vehicle.CarlaSimulation.Control.TransitionState",
+          std::string(*transition_state));
+      Add(snapshot, "Vehicle.CarlaSimulation.Control.Generation",
+          control_facts->control_generation);
+      Add(snapshot, "Vehicle.CarlaSimulation.Reset.Generation",
+          control_facts->reset_generation);
+      Add(snapshot, "Vehicle.CarlaSimulation.Reset.InProgress",
+          control_facts->reset_in_progress);
+      Add(snapshot, "Vehicle.CarlaSimulation.Reset.Discontinuity",
+          control_facts->reset_discontinuity);
+    }
+  }
   if (gnss_fix.has_value()) {
     AddAt(snapshot, "Vehicle.CurrentLocation.Latitude",
           gnss_fix->latitude_deg, gnss_fix->timestamp_utc);

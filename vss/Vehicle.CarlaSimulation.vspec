@@ -47,6 +47,48 @@ Vehicle.CarlaSimulation.GnssSimulationTime:
   min: 0
   description: CARLA source simulation time of the retained GNSS fix.
 
+Vehicle.CarlaSimulation.Control:
+  type: branch
+  description: Applied simulator control facts attributable to the current CARLA frame.
+
+Vehicle.CarlaSimulation.Control.ActiveMode:
+  datatype: string
+  type: sensor
+  allowed: ["SAFE_STOP", "SCENARIO", "MANUAL", "AUTOPILOT"]
+  description: Control mode actually applied for the current CARLA frame.
+
+Vehicle.CarlaSimulation.Control.TransitionState:
+  datatype: string
+  type: sensor
+  allowed: ["STABLE", "PREPARING", "FAILED"]
+  description: Applied control transition state for the current CARLA frame.
+
+Vehicle.CarlaSimulation.Control.Generation:
+  datatype: uint64
+  type: sensor
+  min: 0
+  description: Monotonic accepted control transaction generation.
+
+Vehicle.CarlaSimulation.Reset:
+  type: branch
+  description: Simulator reset facts attributable to the current CARLA frame.
+
+Vehicle.CarlaSimulation.Reset.Generation:
+  datatype: uint64
+  type: sensor
+  min: 0
+  description: Monotonic generation of the latest successful canonical reset.
+
+Vehicle.CarlaSimulation.Reset.InProgress:
+  datatype: boolean
+  type: sensor
+  description: True while a canonical physical reset is being completed or failed.
+
+Vehicle.CarlaSimulation.Reset.Discontinuity:
+  datatype: boolean
+  type: sensor
+  description: True only for the first complete state snapshot after a successful reset.
+
 Vehicle.CarlaSimulation.ChaosWheel:
   type: branch
   description: Simulator-specific live wheel dynamics from the Unreal Chaos solver.

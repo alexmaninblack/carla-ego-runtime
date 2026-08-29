@@ -13,6 +13,14 @@ foreach(path IN ITEMS
     "Vehicle.CarlaSimulation.SimulationTime:"
     "Vehicle.CarlaSimulation.GnssFrameId:"
     "Vehicle.CarlaSimulation.GnssSimulationTime:"
+    "Vehicle.CarlaSimulation.Control:"
+    "Vehicle.CarlaSimulation.Control.ActiveMode:"
+    "Vehicle.CarlaSimulation.Control.TransitionState:"
+    "Vehicle.CarlaSimulation.Control.Generation:"
+    "Vehicle.CarlaSimulation.Reset:"
+    "Vehicle.CarlaSimulation.Reset.Generation:"
+    "Vehicle.CarlaSimulation.Reset.InProgress:"
+    "Vehicle.CarlaSimulation.Reset.Discontinuity:"
     "Vehicle.CarlaSimulation.ChaosWheel:"
     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LateralSlipAngle:"
     "Vehicle.CarlaSimulation.ChaosWheel.Row1.Left.LongitudinalSlip:"
@@ -32,6 +40,7 @@ foreach(fragment IN ITEMS
     "datatype: string"
     "datatype: uint64"
     "datatype: double"
+    "datatype: boolean"
     "type: attribute"
     "type: sensor"
     "default: \"0.2\""
@@ -39,6 +48,20 @@ foreach(fragment IN ITEMS
   string(FIND "${overlay}" "${fragment}" position)
   if(position EQUAL -1)
     message(FATAL_ERROR "VSS overlay is missing required field: ${fragment}")
+  endif()
+endforeach()
+
+foreach(value IN ITEMS
+    "SAFE_STOP"
+    "SCENARIO"
+    "MANUAL"
+    "AUTOPILOT"
+    "STABLE"
+    "PREPARING"
+    "FAILED")
+  string(FIND "${overlay}" "\"${value}\"" position)
+  if(position EQUAL -1)
+    message(FATAL_ERROR "VSS overlay is missing accepted control value: ${value}")
   endif()
 endforeach()
 

@@ -1,6 +1,7 @@
-# VISS/VSS telemetry contract v0.2
+# VISS/VSS telemetry contract v0.3
 
-Status: **implemented for the M4 vehicle-state, GNSS, and VISS network subset**.
+Status: **implemented for the vehicle-state, GNSS, VISS network, and
+frame-coherent Safe Stop projection-core subsets**.
 
 ## Standards baseline
 
@@ -84,6 +85,12 @@ The following project-owned paths extend, but do not modify, VSS 6.0:
 | `Vehicle.CarlaSimulation.SimulationTime` | `double`, s | Exact CARLA elapsed simulation time. |
 | `Vehicle.CarlaSimulation.GnssFrameId` | `uint64` sensor | Source CARLA frame of the retained GNSS fix. |
 | `Vehicle.CarlaSimulation.GnssSimulationTime` | `double`, s | Source CARLA simulation time of the retained GNSS fix. |
+| `Vehicle.CarlaSimulation.Control.ActiveMode` | `string` sensor | Applied `SAFE_STOP`, `SCENARIO`, `MANUAL` or `AUTOPILOT` fact for the same CARLA frame. |
+| `Vehicle.CarlaSimulation.Control.TransitionState` | `string` sensor | Applied `STABLE`, `PREPARING` or `FAILED` transition fact for the same CARLA frame. |
+| `Vehicle.CarlaSimulation.Control.Generation` | `uint64` sensor | Accepted control transaction generation attributable to the same frame. |
+| `Vehicle.CarlaSimulation.Reset.Generation` | `uint64` sensor | Generation of the latest successful canonical reset attributable to the same frame. |
+| `Vehicle.CarlaSimulation.Reset.InProgress` | `boolean` sensor | Whether canonical physical reset work is still in progress for the same frame. |
+| `Vehicle.CarlaSimulation.Reset.Discontinuity` | `boolean` sensor | Whether the current complete frame is the first post-reset discontinuity frame. |
 | `Vehicle.CarlaSimulation.ChaosWheel.Row{1,2}.{Left,Right}.LateralSlipAngle` | `double`, degrees | Signed lateral slip angle reported by the live Chaos wheel state. This is simulator-specific and is not claimed to be a standard VSS signal. |
 | `Vehicle.CarlaSimulation.ChaosWheel.Row{1,2}.{Left,Right}.LongitudinalSlip` | `double` | Longitudinal slip magnitude reported by the live Chaos wheel state. This is simulator-specific and is not claimed to be a standard VSS signal. |
 
@@ -93,6 +100,19 @@ It is structurally validated in the dependency-free test suite and was also
 merged with the complete VSS 6.0 catalog under `vss-tools` 6.0 `--strict`.
 The merged tree confirms the documented types and units. The overlay uses a
 project namespace and is not presented as part of standard COVESA VSS.
+
+The six control/reset points form one optional, all-or-none fact group. Its
+typed source frame must equal the physical vehicle-state frame before any of
+the six points are projected. Missing or mismatched context therefore keeps
+all six unavailable while truthful physical telemetry remains available. The
+projector never copies an older context forward, invents a default, evaluates
+Safe Stop thresholds or authorizes a Platform update. VISS encodes boolean
+datapoint values as the strings `true` and `false`, not numeric substitutes.
+
+This source-only projection core does not claim the live controller-to-Gateway
+handoff, the purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS role, or an
+operational `IF-VEH-007` path. Those remain separate implementation and
+qualification work.
 
 ## Time and synchronization
 

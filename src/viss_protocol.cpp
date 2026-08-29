@@ -87,6 +87,8 @@ std::string VssValueString(const VssValue &value) {
           output << std::setprecision(std::numeric_limits<double>::max_digits10)
                  << item;
           return output.str();
+        } else if constexpr (std::is_same_v<Item, bool>) {
+          return item ? "true" : "false";
         } else {
           return std::to_string(item);
         }

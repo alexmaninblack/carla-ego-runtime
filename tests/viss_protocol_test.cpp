@@ -53,6 +53,10 @@ void PopulateStore(carla_ego_runtime::LatestVssSignalStore &store) {
       VssDataPoint{"Vehicle.CurrentLocation.Latitude", 52.5,
                    "2026-08-12T12:34:56.700Z"},
       VssDataPoint{"Vehicle.CarlaSimulation.RunId", std::string("run-1"),
+                   snapshot.timestamp},
+      VssDataPoint{"Vehicle.CarlaSimulation.Reset.InProgress", false,
+                   snapshot.timestamp},
+      VssDataPoint{"Vehicle.CarlaSimulation.Reset.Discontinuity", true,
                    snapshot.timestamp}};
   Check(store.Publish(std::move(snapshot)), "test snapshot published");
 }
@@ -101,6 +105,24 @@ int main() {
         "VISS value is serialized as a string");
   Check(StringAt(data.at("dp").as_object(), "ts") == "2026-08-12T12:34:56.789Z",
         "source data timestamp preserved");
+
+  response = protocol.HandleRequest(
+      R"({"action":"get","path":"Vehicle.CarlaSimulation.Reset.InProgress","requestId":"get-bool-false"})",
+      store, system_time, steady_time);
+  Check(!response.is_error, "false boolean get succeeds");
+  object = ParseObject(response.payload);
+  Check(StringAt(object.at("data").as_object().at("dp").as_object(),
+                 "value") == "false",
+        "false VSS boolean is serialized canonically");
+
+  response = protocol.HandleRequest(
+      R"({"action":"get","path":"Vehicle.CarlaSimulation.Reset.Discontinuity","requestId":"get-bool-true"})",
+      store, system_time, steady_time);
+  Check(!response.is_error, "true boolean get succeeds");
+  object = ParseObject(response.payload);
+  Check(StringAt(object.at("data").as_object().at("dp").as_object(),
+                 "value") == "true",
+        "true VSS boolean is serialized canonically");
 
   response = protocol.HandleRequest(
       R"({"action":"get","path":"Vehicle","filter":{"variant":"paths","parameter":["Speed","CurrentLocation.*"]},"requestId":"get-2"})",
@@ -161,6 +183,30 @@ int main() {
         "subscription applies path selection");
 
   response = protocol.HandleRequest(
+      R"({"action":"subscribe","path":"Vehicle.CarlaSimulation.Reset","filter":{"variant":"timebased","parameter":{"period":"50"}},"requestId":"sub-bool"})",
+      store, system_time, steady_time);
+  Check(!response.is_error, "boolean subscription succeeds");
+  object = ParseObject(response.payload);
+  const auto boolean_subscription_id = StringAt(object, "subscriptionId");
+  const auto boolean_events = protocol.CollectDueSubscriptionEvents(
+      store, system_time + 50ms, steady_time + 50ms);
+  Check(boolean_events.size() == 1, "boolean subscription emits at its period");
+  if (boolean_events.size() == 1) {
+    const auto boolean_event = ParseObject(boolean_events.front());
+    const auto &boolean_data = boolean_event.at("data").as_array();
+    Check(boolean_data.size() == 2,
+          "boolean subscription returns the complete requested branch");
+    if (boolean_data.size() == 2) {
+      Check(StringAt(boolean_data.at(0).as_object().at("dp").as_object(),
+                     "value") == "false",
+            "subscription serializes false boolean canonically");
+      Check(StringAt(boolean_data.at(1).as_object().at("dp").as_object(),
+                     "value") == "true",
+            "subscription serializes true boolean canonically");
+    }
+  }
+
+  response = protocol.HandleRequest(
       std::string(R"({"action":"unsubscribe","subscriptionId":")") +
           subscription_id + R"(","requestId":"unsub-1"})",
       store, system_time + 101ms, steady_time + 101ms);
@@ -171,8 +217,14 @@ int main() {
   Check(protocol
             .CollectDueSubscriptionEvents(store, system_time + 300ms,
                                           steady_time + 300ms)
-            .empty(),
+            .size() == 1,
         "unsubscribed stream stops");
+
+  response = protocol.HandleRequest(
+      std::string(R"({"action":"unsubscribe","subscriptionId":")") +
+          boolean_subscription_id + R"(","requestId":"unsub-bool"})",
+      store, system_time + 301ms, steady_time + 301ms);
+  Check(!response.is_error, "boolean subscription unsubscribe succeeds");
 
   CheckError(
       protocol.HandleRequest(
@@ -206,8 +258,8 @@ int main() {
   const auto metrics = protocol.metrics();
   Check(metrics.requests >= 11, "request metric counts protocol requests");
   Check(metrics.errors >= 5, "protocol error metric is observable");
-  Check(metrics.subscription_events == 1,
-        "subscription event metric is observable");
+  Check(metrics.subscription_events >= 2,
+        "subscription event metric includes boolean delivery");
 
   const auto bounded_before = bounded.metrics();
   const auto coalesced_events = bounded.CollectDueSubscriptionEvents(
