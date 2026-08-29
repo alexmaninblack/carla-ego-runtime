@@ -32,6 +32,7 @@ add_library(
   carla-ego-runtime-core STATIC
   src/chase_camera.cpp
   src/runtime_options.cpp
+  src/simulator_control_channel.cpp
   src/gnss.cpp
   src/vehicle_state.cpp
   src/vss.cpp
@@ -161,9 +162,19 @@ if(BUILD_TESTING)
   target_link_libraries(vss-projection-test PRIVATE carla-ego-runtime-core)
   carla_ego_enable_warnings(vss-projection-test)
 
+  add_executable(
+    simulator-control-channel-test
+    tests/simulator_control_channel_test.cpp
+  )
+  target_link_libraries(
+    simulator-control-channel-test PRIVATE carla-ego-runtime-core
+  )
+  carla_ego_enable_warnings(simulator-control-channel-test)
+
   add_test(NAME runtime_options COMMAND runtime-options-test)
   add_test(NAME vehicle_state COMMAND vehicle-state-test)
   add_test(NAME vss_projection COMMAND vss-projection-test)
+  add_test(NAME simulator_control_channel COMMAND simulator-control-channel-test)
 
   add_executable(gnss-test tests/gnss_test.cpp)
   target_link_libraries(gnss-test PRIVATE carla-ego-runtime-core)
@@ -222,6 +233,12 @@ if(BUILD_TESTING)
       COMMAND
         "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/external_control_protocol_test.py"
+    )
+    add_test(
+      NAME m6_tools
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_tools_test.py"
     )
     add_test(
       NAME m6_1_tools

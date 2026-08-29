@@ -1,4 +1,4 @@
-# External control contract v2
+# External control contract v3
 
 ## Transport and access
 
@@ -10,9 +10,10 @@ directory. Every request contains `version`, `action`, and a unique
 `requestId`. Every response repeats those fields, adds an ISO 8601 UTC `ts`,
 and contains either `status: "ok"` or a structured `error`.
 
-Version 2 adds explicit live drive modes. The server continues to accept
-version 1 clients: acquiring a v1 session selects the legacy manual mode, and
-its `command`, `heartbeat`, and `release` semantics are unchanged.
+Versions 2 and 3 add explicit live drive modes and the hybrid Scenario mode.
+The server continues to accept version 1 clients: acquiring a v1 session
+selects the legacy manual request, and its `command`, `heartbeat`, and
+`release` semantics are unchanged.
 
 ## Acquire
 
@@ -37,6 +38,14 @@ separate, explicit action.
   actor while the external controller continues to own simulation ticks.
 - `safe_stop` disables automatic control and applies zero throttle, full brake,
   and centred steering.
+
+The requested protocol mode is not automatically the applied vehicle mode.
+Manual mode remains applied `SAFE_STOP` until the first valid actuator command;
+a command timeout likewise returns the applied mode to `SAFE_STOP` while the
+session remains available for recovery. Each non-idempotent requested or
+controller-forced applied-mode transition increments the bounded control
+generation. The controller never reports a requested mode as applied before
+the corresponding CARLA operation succeeds.
 
 Selecting the current mode again is idempotent and does not interrupt control.
 Autopilot activation is rejected unless the vehicle is close to a driving lane
@@ -90,6 +99,44 @@ therefore do not replace the actor, reset the scene, or interrupt VISS. The C++
 runtime remains a non-owning telemetry observer, and VISS remains a read-only
 interface. Socket paths, token files, and token values never enter the public
 VSS tree.
+
+## Controller-to-Gateway frame facts
+
+`run_m6.py` creates a second, short per-run Unix socket path in the same `0700`
+runtime directory. It passes an explicit shared run ID and this facts path to
+the Python tick owner and the C++ observer. The facts transport is independent
+of the authenticated operator-control stream: it is one non-blocking
+`AF_UNIX`/`SOCK_DGRAM` JSON record after each successful real `world.tick`.
+The record contains only `schemaVersion`, run and ego identity, the returned
+CARLA frame and simulation time, the actually applied mode, transition state,
+control and reset generations, reset-in-progress and one-frame reset
+discontinuity. It never contains a command token, session, operator identity,
+Safe Stop conclusion or history.
+
+The C++ process binds the datagram receiver before the startup gate, requires
+an owner-only `0700` directory and `0600` socket, verifies Linux kernel peer
+credentials and pins the first valid same-run/same-ego producer PID. The 4096
+byte maximum and `MSG_TRUNC` are enforced before JSON parsing. Send
+backpressure, a missing receiver or process shutdown increments telemetry-loss
+evidence in the controller and never blocks CARLA ticks or changes controller
+behavior.
+
+The C++ observer accepts only a closed version-1 record with exact types and
+enums. It joins facts to physical telemetry only when frame ID and binary
+simulation time both match. At most four unmatched records per side remain for
+250 ms of host-monotonic residence. Wrong identity, malformed, duplicate,
+out-of-order, generation-regressing, expired or capacity-evicted input leaves
+all six control/reset VSS facts absent for that physical frame; no last-known
+value is reused. `controller-status.json` remains run evidence and is never
+polled as a vehicle-state transport.
+
+A canonical reset emits no fabricated frame while the operation blocks. Reset
+generation advances only when a real completed post-reset frame exists; that
+first record carries `Reset.InProgress=false` and
+`Reset.Discontinuity=true`, and the next completed record clears the
+discontinuity. A failed transition attempts one real full-brake frame with
+`ActiveMode=SAFE_STOP` and `TransitionState=FAILED`; if CARLA cannot complete
+that frame, no success or failure frame is invented.
 
 BehaviorAgent remains available through the separate M5 configuration. M6.2
 does not start a second BehaviorAgent tick owner; live automatic driving uses

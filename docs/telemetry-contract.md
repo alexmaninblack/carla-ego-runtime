@@ -1,7 +1,8 @@
 # VISS/VSS telemetry contract v0.3
 
-Status: **implemented for the vehicle-state, GNSS, VISS network, and
-frame-coherent Safe Stop projection-core subsets**.
+Status: **implemented for the vehicle-state, GNSS, VISS network,
+frame-coherent Safe Stop projection and live controller-to-Gateway handoff
+subsets**.
 
 ## Standards baseline
 
@@ -101,18 +102,25 @@ merged with the complete VSS 6.0 catalog under `vss-tools` 6.0 `--strict`.
 The merged tree confirms the documented types and units. The overlay uses a
 project namespace and is not presented as part of standard COVESA VSS.
 
-The six control/reset points form one optional, all-or-none fact group. Its
-typed source frame must equal the physical vehicle-state frame before any of
-the six points are projected. Missing or mismatched context therefore keeps
-all six unavailable while truthful physical telemetry remains available. The
-projector never copies an older context forward, invents a default, evaluates
-Safe Stop thresholds or authorizes a Platform update. VISS encodes boolean
-datapoint values as the strings `true` and `false`, not numeric substitutes.
+The six control/reset points form one optional, all-or-none fact group. The
+live C++ channel accepts one closed controller record only when its run ID and
+ego actor match the selected observer context and its frame ID plus simulation
+time exactly match the physical vehicle state. Missing, truncated, malformed,
+wrong-identity, duplicate, out-of-order, expired or generation-regressing
+context therefore keeps all six unavailable while truthful physical telemetry
+remains available. The projector never copies an older context forward,
+invents a default, evaluates Safe Stop thresholds or authorizes a Platform
+update. All six points use the physical frame's existing UTC source timestamp;
+VISS encodes boolean datapoint values as the strings `true` and `false`, not
+numeric substitutes.
 
-This source-only projection core does not claim the live controller-to-Gateway
-handoff, the purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS role, or an
-operational `IF-VEH-007` path. Those remain separate implementation and
-qualification work.
+The live facts handoff is a private, non-blocking Unix datagram path created
+for one run. The receiver holds at most four unmatched physical and four
+unmatched controller records for at most 250 ms, pins one Linux peer PID after
+valid run/ego attribution, and keeps saturating diagnostic counters only. It
+does not use `controller-status.json`, retain history or implement reconnect.
+The purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS role and live qualification
+remain separate work.
 
 ## Time and synchronization
 

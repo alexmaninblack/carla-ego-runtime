@@ -27,6 +27,8 @@ struct RuntimeOptions {
   std::uint16_t viss_port = 6443;
   std::string viss_certificate_chain_file;
   std::string viss_private_key_file;
+  std::string control_facts_socket_file;
+  std::string simulator_run_id;
   std::size_t viss_max_clients = 8;
   std::size_t viss_max_subscriptions_per_client = 16;
   std::size_t viss_max_pending_messages_per_client = 8;

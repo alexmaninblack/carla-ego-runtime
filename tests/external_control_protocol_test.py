@@ -1,4 +1,5 @@
 import socket
+import json
 import sys
 import tempfile
 import time
@@ -9,9 +10,12 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY))
 
 from tools.external_control_protocol import (
+    ControllerFactsDatagramSender,
+    ControllerFactsState,
     ControlProtocolError,
     ExternalControlState,
     LocalControlServer,
+    encode_controller_gateway_record,
     request,
 )
 
@@ -139,6 +143,7 @@ class ExternalControlStateTests(unittest.TestCase):
     def test_heartbeat_does_not_keep_an_old_command_active(self):
         session = acquire(self.state)
         command(self.state, session, 1, 1.1, throttle=0.4)
+        driving_generation = self.state.current_control(1.2).mode_generation
         self.state.handle(
             {
                 "version": 1,
@@ -150,8 +155,14 @@ class ExternalControlStateTests(unittest.TestCase):
         )
         control = self.state.current_control(1.36)
         self.assertTrue(control.safe_stop)
+        self.assertEqual(control.mode, "safe_stop")
+        self.assertGreater(control.mode_generation, driving_generation)
         self.assertEqual(control.reason, "command_timeout")
         self.assertTrue(self.state.snapshot()["session_active"])
+        command(self.state, session, 2, 1.37, throttle=0.2)
+        recovered = self.state.current_control(1.38)
+        self.assertEqual(recovered.mode, "manual")
+        self.assertGreater(recovered.mode_generation, control.mode_generation)
 
     def test_ownership_timeout_drops_session(self):
         session = acquire(self.state)
@@ -193,8 +204,10 @@ class ExternalControlStateTests(unittest.TestCase):
         self.assertFalse(automatic.safe_stop)
         set_mode(self.state, session, "manual", 1.6)
         resumed = self.state.current_control(1.6)
-        self.assertEqual(resumed.mode, "manual")
+        self.assertEqual(resumed.mode, "safe_stop")
         self.assertTrue(resumed.safe_stop)
+        command(self.state, session, 2, 1.7, throttle=0.2)
+        self.assertEqual(self.state.current_control(1.7).mode, "manual")
 
     def test_commands_are_rejected_outside_manual_mode(self):
         session = acquire_v2(self.state)
@@ -304,6 +317,155 @@ class ExternalControlStateTests(unittest.TestCase):
         self.assertEqual(
             acquired["availableModes"], ["autopilot", "manual", "safe_stop"]
         )
+
+
+class ControllerGatewayHandoffTests(unittest.TestCase):
+    def test_closed_record_and_one_frame_reset_discontinuity(self):
+        state = ControllerFactsState()
+        self.assertTrue(state.begin_transition("scenario", 1, True))
+        self.assertEqual(state.active_mode, "safe_stop")
+        self.assertEqual(state.transition_state, "preparing")
+        state.complete_transition("scenario", reset_completed=True)
+        first = json.loads(
+            state.completed_frame(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=10,
+                simulation_time=0.5,
+            )
+        )
+        second = json.loads(
+            state.completed_frame(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=11,
+                simulation_time=0.55,
+            )
+        )
+        self.assertEqual(first["activeMode"], "SCENARIO")
+        self.assertEqual(first["transitionState"], "STABLE")
+        self.assertEqual(first["controlGeneration"], 1)
+        self.assertEqual(first["resetGeneration"], 1)
+        self.assertTrue(first["resetDiscontinuity"])
+        self.assertFalse(second["resetDiscontinuity"])
+
+    def test_idempotent_mode_does_not_advance_generation(self):
+        state = ControllerFactsState()
+        self.assertFalse(state.begin_transition("safe_stop", 0, False))
+        record = json.loads(
+            state.completed_frame(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=1,
+                simulation_time=0.05,
+            )
+        )
+        self.assertEqual(record["controlGeneration"], 0)
+
+    def test_failed_transition_reports_safe_stop_on_one_real_frame(self):
+        state = ControllerFactsState()
+        state.begin_transition("manual", 1, False)
+        state.fail_transition()
+        failed = json.loads(
+            state.completed_frame(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=2,
+                simulation_time=0.1,
+            )
+        )
+        stable = json.loads(
+            state.completed_frame(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=3,
+                simulation_time=0.15,
+            )
+        )
+        self.assertEqual(failed["activeMode"], "SAFE_STOP")
+        self.assertEqual(failed["transitionState"], "FAILED")
+        self.assertEqual(stable["transitionState"], "STABLE")
+
+    def test_generation_regression_and_reset_mismatch_are_rejected(self):
+        state = ControllerFactsState()
+        state.begin_transition("manual", 2, False)
+        with self.assertRaisesRegex(ValueError, "reset completion"):
+            state.complete_transition("manual", reset_completed=True)
+        state.complete_transition("manual", reset_completed=False)
+        with self.assertRaisesRegex(ValueError, "must increase"):
+            state.begin_transition("autopilot", 1, False)
+
+    def test_record_codec_rejects_invalid_values(self):
+        values = {
+            "run_id": "run-a",
+            "ego_actor_id": 42,
+            "frame_id": 1,
+            "simulation_time": 0.05,
+            "active_mode": "safe_stop",
+            "transition_state": "stable",
+            "control_generation": 0,
+            "reset_generation": 0,
+            "reset_in_progress": False,
+            "reset_discontinuity": False,
+        }
+        payload = encode_controller_gateway_record(**values)
+        self.assertLessEqual(len(payload), 4096)
+        self.assertEqual(set(json.loads(payload)), {
+            "schemaVersion", "runId", "egoActorId", "frameId",
+            "simulationTime", "activeMode", "transitionState",
+            "controlGeneration", "resetGeneration", "resetInProgress",
+            "resetDiscontinuity",
+        })
+        for name, value in {
+            "run_id": "",
+            "ego_actor_id": True,
+            "frame_id": -1,
+            "simulation_time": float("nan"),
+            "active_mode": "requested",
+            "transition_state": "unknown",
+        }.items():
+            invalid = dict(values)
+            invalid[name] = value
+            with self.assertRaises(ValueError, msg=name):
+                encode_controller_gateway_record(**invalid)
+
+    def test_nonblocking_datagram_sender_uses_one_atomic_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "facts.sock"
+            receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            receiver.bind(str(path))
+            sender = ControllerFactsDatagramSender(path)
+            payload = encode_controller_gateway_record(
+                run_id="run-a",
+                ego_actor_id=42,
+                frame_id=1,
+                simulation_time=0.05,
+                active_mode="safe_stop",
+                transition_state="stable",
+                control_generation=0,
+                reset_generation=0,
+                reset_in_progress=False,
+                reset_discontinuity=False,
+            )
+            try:
+                self.assertTrue(sender.send(payload))
+                self.assertEqual(receiver.recv(4096), payload)
+                self.assertEqual(sender.sent, 1)
+                self.assertEqual(sender.dropped, 0)
+            finally:
+                sender.close()
+                receiver.close()
+
+    def test_disconnected_receiver_is_explicit_telemetry_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sender = ControllerFactsDatagramSender(
+                Path(directory) / "missing.sock"
+            )
+            try:
+                self.assertFalse(sender.send(b"{}"))
+                self.assertEqual(sender.dropped, 1)
+            finally:
+                sender.close()
 
 
 class LocalControlServerTests(unittest.TestCase):

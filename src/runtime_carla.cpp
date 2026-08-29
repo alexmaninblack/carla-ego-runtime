@@ -1,6 +1,7 @@
 #include "carla_ego_runtime/chase_camera.hpp"
 #include "carla_ego_runtime/gnss.hpp"
 #include "carla_ego_runtime/runtime.hpp"
+#include "carla_ego_runtime/simulator_control_channel.hpp"
 #include "carla_ego_runtime/vehicle_state.hpp"
 #include "carla_ego_runtime/vss.hpp"
 #if defined(CARLA_EGO_WITH_VISS)
@@ -587,7 +588,16 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
 
   ConfigureStopSignals();
   const auto started_at = std::chrono::steady_clock::now();
-  const auto run_id = GenerateRunId();
+  const auto run_id = options.simulator_run_id.empty()
+                          ? GenerateRunId()
+                          : options.simulator_run_id;
+  std::unique_ptr<SimulatorControlChannel> control_channel;
+  if (!options.control_facts_socket_file.empty()) {
+    control_channel = std::make_unique<SimulatorControlChannel>(
+        SimulatorControlChannelConfig{options.control_facts_socket_file, run_id,
+                                      static_cast<std::uint64_t>(vehicle->GetId())});
+    std::cout << "Controller facts: private frame-coherent datagram handoff enabled\n";
+  }
   WheelRadii wheel_radii;
   const auto physics = vehicle->GetPhysicsControl();
   const auto available_wheel_radii =
@@ -685,7 +695,14 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     if (gnss_sample.has_value()) {
       normalized_gnss = NormalizeGnssSample(*gnss_sample, *clock_anchor);
     }
-    auto vss_snapshot = ProjectToVss(normalized, normalized_gnss);
+    std::optional<SimulatorControlFacts> control_facts;
+    if (control_channel) {
+      control_facts = control_channel->WaitFor(
+          {run_id, static_cast<std::uint64_t>(vehicle->GetId()),
+           normalized.frame_id, normalized.simulation_time_s});
+    }
+    auto vss_snapshot =
+        ProjectToVss(normalized, normalized_gnss, control_facts);
     if (!signal_store.Publish(std::move(vss_snapshot))) {
       throw std::runtime_error("duplicate or out-of-order CARLA frame " +
                                std::to_string(snapshot.GetFrame()));
@@ -714,6 +731,17 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
             << " frame-aligned VSS state update(s); retained snapshots=1\n"
             << "GNSS fixes accepted=" << gnss_store.publish_count()
             << " rejected=" << gnss_store.rejected_count() << '\n';
+  if (control_channel) {
+    const auto diagnostics = control_channel->diagnostics();
+    std::cout << "Controller facts accepted="
+              << diagnostics.datagrams_accepted
+              << " matched=" << diagnostics.records_matched
+              << " malformed=" << diagnostics.malformed_records
+              << " wrong_identity=" << diagnostics.wrong_identity_records
+              << " out_of_order="
+              << diagnostics.duplicate_or_out_of_order_records
+              << " expired=" << diagnostics.expired_records << '\n';
+  }
 #if defined(CARLA_EGO_WITH_VISS)
   if (viss_server) {
     viss_server->Stop();

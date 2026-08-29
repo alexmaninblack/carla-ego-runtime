@@ -203,6 +203,13 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
         throw std::invalid_argument(
             "--viss-max-pending-messages must be between 1 and 1024");
       }
+    } else if (argument == "--control-facts-socket") {
+      result.options.control_facts_socket_file = RequireValue(arguments, index);
+      RequireNonEmpty(result.options.control_facts_socket_file,
+                      "--control-facts-socket");
+    } else if (argument == "--simulator-run-id") {
+      result.options.simulator_run_id = RequireValue(arguments, index);
+      RequireNonEmpty(result.options.simulator_run_id, "--simulator-run-id");
     } else if (argument == "--observe-ticks") {
       result.options.tick_owner = false;
     } else if (argument == "--real-time") {
@@ -254,6 +261,16 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
     throw std::invalid_argument(
         "--viss requires both --viss-cert and --viss-key");
   }
+  if (result.options.control_facts_socket_file.empty() !=
+      result.options.simulator_run_id.empty()) {
+    throw std::invalid_argument(
+        "--control-facts-socket and --simulator-run-id must be supplied together");
+  }
+  if (!result.options.control_facts_socket_file.empty() &&
+      result.options.tick_owner) {
+    throw std::invalid_argument(
+        "--control-facts-socket requires --observe-ticks");
+  }
 
   return result;
 }
@@ -304,6 +321,9 @@ Options:
                                 Subscription cap per client (default: 16)
       --viss-max-pending-messages N
                                 Outbound queue cap per client (default: 8)
+      --control-facts-socket FILE
+                                Private controller-to-Gateway datagram socket
+      --simulator-run-id ID     Per-run identity shared with the controller
       --observe-ticks           Do not own or advance the simulation clock;
                                 wait for another designated tick owner
 )";

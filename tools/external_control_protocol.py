@@ -23,6 +23,7 @@ SUPPORTED_VERSIONS = {1, 2, 3}
 DRIVE_MODES = {"safe_stop", "manual", "autopilot", "scenario"}
 DEFAULT_AVAILABLE_MODES = {"safe_stop", "manual", "autopilot"}
 MAX_MESSAGE_BYTES = 16 * 1024
+MAX_CONTROL_FACTS_DATAGRAM_BYTES = 4096
 SAFE_CONTROL = {"throttle": 0.0, "brake": 1.0, "steering": 0.0}
 
 
@@ -49,6 +50,172 @@ class AppliedControl:
     reason: str
     mode: str
     mode_generation: int
+
+
+def _uint64(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an unsigned integer")
+    if value < 0 or value > (1 << 64) - 1:
+        raise ValueError(f"{name} must fit uint64")
+    return value
+
+
+def encode_controller_gateway_record(
+    *,
+    run_id: str,
+    ego_actor_id: int,
+    frame_id: int,
+    simulation_time: float,
+    active_mode: str,
+    transition_state: str,
+    control_generation: int,
+    reset_generation: int,
+    reset_in_progress: bool,
+    reset_discontinuity: bool,
+) -> bytes:
+    if not isinstance(run_id, str) or not run_id or "\x00" in run_id:
+        raise ValueError("run_id must be a non-empty string")
+    if active_mode not in {"safe_stop", "scenario", "manual", "autopilot"}:
+        raise ValueError("active_mode is invalid")
+    if transition_state not in {"stable", "preparing", "failed"}:
+        raise ValueError("transition_state is invalid")
+    if (
+        isinstance(simulation_time, bool)
+        or not isinstance(simulation_time, (int, float))
+        or not math.isfinite(float(simulation_time))
+        or float(simulation_time) < 0.0
+    ):
+        raise ValueError("simulation_time must be finite and non-negative")
+    if not isinstance(reset_in_progress, bool) or not isinstance(
+        reset_discontinuity, bool
+    ):
+        raise ValueError("reset flags must be boolean")
+    if reset_in_progress and reset_discontinuity:
+        raise ValueError("reset cannot be in progress and discontinuous")
+    record = {
+        "schemaVersion": 1,
+        "runId": run_id,
+        "egoActorId": _uint64(ego_actor_id, "ego_actor_id"),
+        "frameId": _uint64(frame_id, "frame_id"),
+        "simulationTime": float(simulation_time),
+        "activeMode": active_mode.upper(),
+        "transitionState": transition_state.upper(),
+        "controlGeneration": _uint64(control_generation, "control_generation"),
+        "resetGeneration": _uint64(reset_generation, "reset_generation"),
+        "resetInProgress": reset_in_progress,
+        "resetDiscontinuity": reset_discontinuity,
+    }
+    payload = json.dumps(
+        record, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    if len(payload) > MAX_CONTROL_FACTS_DATAGRAM_BYTES:
+        raise ValueError("controller facts datagram exceeds 4096 bytes")
+    return payload
+
+
+class ControllerFactsState:
+    """Actual applied controller/reset state, independent of requested mode."""
+
+    def __init__(self) -> None:
+        self.active_mode = "safe_stop"
+        self.transition_state = "stable"
+        self.control_generation = 0
+        self.reset_generation = 0
+        self.reset_in_progress = False
+        self._requested_mode = "safe_stop"
+        self._discontinuity_pending = False
+
+    def begin_transition(
+        self, requested_mode: str, control_generation: int, reset_required: bool
+    ) -> bool:
+        if requested_mode not in DRIVE_MODES:
+            raise ValueError("requested mode is invalid")
+        generation = _uint64(control_generation, "control_generation")
+        if (
+            generation == self.control_generation
+            and requested_mode == self.active_mode
+            and requested_mode != "scenario"
+        ):
+            return False
+        if generation <= self.control_generation:
+            raise ValueError("non-idempotent control generation must increase")
+        self.control_generation = generation
+        self._requested_mode = requested_mode
+        self.transition_state = "preparing"
+        self.reset_in_progress = bool(reset_required)
+        return True
+
+    def complete_transition(self, applied_mode: str, reset_completed: bool) -> None:
+        if self.transition_state != "preparing" or applied_mode != self._requested_mode:
+            raise ValueError("no matching transition is being prepared")
+        if self.reset_in_progress != bool(reset_completed):
+            raise ValueError("reset completion does not match the transition")
+        if reset_completed:
+            if self.reset_generation == (1 << 64) - 1:
+                raise OverflowError("reset generation cannot wrap")
+            self.reset_generation += 1
+            self._discontinuity_pending = True
+        self.active_mode = applied_mode
+        self.transition_state = "stable"
+        self.reset_in_progress = False
+
+    def fail_transition(self) -> None:
+        if self.transition_state != "preparing":
+            raise ValueError("no transition is being prepared")
+        self.active_mode = "safe_stop"
+        self.transition_state = "failed"
+        self.reset_in_progress = False
+
+    def completed_frame(
+        self,
+        *,
+        run_id: str,
+        ego_actor_id: int,
+        frame_id: int,
+        simulation_time: float,
+    ) -> bytes:
+        payload = encode_controller_gateway_record(
+            run_id=run_id,
+            ego_actor_id=ego_actor_id,
+            frame_id=frame_id,
+            simulation_time=simulation_time,
+            active_mode=self.active_mode,
+            transition_state=self.transition_state,
+            control_generation=self.control_generation,
+            reset_generation=self.reset_generation,
+            reset_in_progress=self.reset_in_progress,
+            reset_discontinuity=self._discontinuity_pending,
+        )
+        self._discontinuity_pending = False
+        if self.transition_state == "failed":
+            self.transition_state = "stable"
+        return payload
+
+
+class ControllerFactsDatagramSender:
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._socket.setblocking(False)
+        self.sent = 0
+        self.dropped = 0
+
+    def send(self, payload: bytes) -> bool:
+        if not isinstance(payload, bytes) or len(payload) > MAX_CONTROL_FACTS_DATAGRAM_BYTES:
+            raise ValueError("controller facts payload is invalid")
+        try:
+            sent = self._socket.sendto(payload, str(self.socket_path))
+        except (BlockingIOError, FileNotFoundError, ConnectionRefusedError, OSError):
+            self.dropped += 1
+            return False
+        if sent != len(payload):
+            self.dropped += 1
+            return False
+        self.sent += 1
+        return True
+
+    def close(self) -> None:
+        self._socket.close()
 
 
 def _number(value: Any, name: str, minimum: float, maximum: float) -> float:
@@ -140,8 +307,19 @@ class ExternalControlState:
             self._safe_stop_reason = reason
             self._event("safe_stop_selected", reason=reason)
 
+    def _advance_mode_generation(self) -> None:
+        if self._mode_generation == (1 << 64) - 1:
+            raise RuntimeError("control mode generation cannot wrap")
+        self._mode_generation += 1
+
+    def _applied_mode(self) -> str:
+        if self._mode == "manual" and self._safe_stop_reason != "command":
+            return "safe_stop"
+        return self._mode
+
     def _drop_ownership(self, reason: str) -> None:
         self._mode = "safe_stop"
+        self._advance_mode_generation()
         self._select_safe_stop(reason)
         self._session_id = None
         self._client_id = None
@@ -213,6 +391,7 @@ class ExternalControlState:
                 raise ControlProtocolError(
                     "invalid_command", "throttle and brake cannot both be non-zero"
                 )
+            recovering_from_safe_stop = self._safe_stop_reason != "command"
             self._last_sequence = sequence
             self._last_command_at = now
             self._last_heartbeat_at = now
@@ -222,6 +401,8 @@ class ExternalControlState:
                 "steering": steering,
             }
             self._safe_stop_reason = "command"
+            if recovering_from_safe_stop:
+                self._advance_mode_generation()
             self._metrics["commands"] += 1
             return {"status": "ok", "sequence": sequence}
 
@@ -254,7 +435,7 @@ class ExternalControlState:
                 if unavailable is not None:
                     raise ControlProtocolError("mode_unavailable", unavailable)
             self._mode = mode
-            self._mode_generation += 1
+            self._advance_mode_generation()
             self._last_heartbeat_at = now
             if mode == "manual":
                 self._select_safe_stop("awaiting_command")
@@ -290,7 +471,7 @@ class ExternalControlState:
             self._metrics["heartbeats"] += 1
             return {
                 "status": "ok",
-                "mode": self._mode,
+                "mode": self._applied_mode(),
                 "modeGeneration": self._mode_generation,
                 "reason": self._safe_stop_reason,
             }
@@ -327,6 +508,7 @@ class ExternalControlState:
                 ):
                     if self._safe_stop_reason != "command_timeout":
                         self._metrics["command_timeouts"] += 1
+                        self._advance_mode_generation()
                     self._select_safe_stop("command_timeout")
             return AppliedControl(
                 throttle=float(self._command["throttle"]),
@@ -338,7 +520,7 @@ class ExternalControlState:
                     or (self._mode == "manual" and self._safe_stop_reason != "command")
                 ),
                 reason=self._safe_stop_reason,
-                mode=self._mode,
+                mode=self._applied_mode(),
                 mode_generation=self._mode_generation,
             )
 
@@ -348,7 +530,7 @@ class ExternalControlState:
         with self._lock:
             previous_mode = self._mode
             self._mode = "safe_stop"
-            self._mode_generation += 1
+            self._advance_mode_generation()
             self._select_safe_stop(reason)
             self._metrics["mode_changes"] += 1
             self._event(
@@ -366,7 +548,7 @@ class ExternalControlState:
                 "session_active": self._session_id is not None,
                 "last_sequence": self._last_sequence,
                 "safe_stop_reason": self._safe_stop_reason,
-                "mode": self._mode,
+                "mode": self._applied_mode(),
                 "mode_generation": self._mode_generation,
                 "available_modes": sorted(self._available_modes),
                 **self._metrics,

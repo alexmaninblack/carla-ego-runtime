@@ -190,6 +190,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
     collision_sensor = None
     settings_changed = False
     server = None
+    facts_sender = None
+    facts_state = None
     completed = False
     stopped = False
     control_events = []
@@ -260,6 +262,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         if vehicle is None:
             raise RuntimeError(f"start spawn point {start_index} is occupied")
         world.tick(float(carla_config["timeout_seconds"]))
+        facts_state = PROTOCOL.ControllerFactsState()
+        facts_sender = PROTOCOL.ControllerFactsDatagramSender(
+            arguments.facts_socket_file
+        )
 
         if scenario_config is not None:
             obstacle_config = scenario_config["obstacle"]
@@ -348,6 +354,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             vehicle_type=vehicle.type_id,
             socket=arguments.socket_file.name,
             token=arguments.token_file.name,
+            controller_facts_socket=arguments.facts_socket_file.name,
+            run_id=arguments.run_id,
             available_modes=sorted(available_modes),
             scenario=(
                 {
@@ -451,6 +459,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             }
 
         while not STOP_REQUESTED:
+            pending_facts_transition = None
             now = time.monotonic()
             if now - started_at > float(control_config["maximum_session_seconds"]):
                 completed = True
@@ -471,6 +480,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             )
             if mode_changed:
                 previous_mode = active_mode
+                reset_required = applied.mode == "scenario"
+                facts_state.begin_transition(
+                    applied.mode, applied.mode_generation, reset_required
+                )
                 if (
                     active_mode == "scenario"
                     and scenario_machine is not None
@@ -526,6 +539,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     )
                 active_mode = applied.mode
                 active_mode_generation = applied.mode_generation
+                pending_facts_transition = (active_mode, reset_required)
                 emit(
                     "drive_mode_applied",
                     previous_mode=previous_mode,
@@ -635,11 +649,32 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 last_safe_stop = applied.safe_stop
                 last_reason = applied.reason
                 write_control_snapshot(control_state.snapshot())
-            next_tick_at = M5.pace_tick(
-                world,
-                float(carla_config["timeout_seconds"]),
-                next_tick_at,
-                period,
+            if period > 0:
+                next_tick_at += period
+                remaining = next_tick_at - time.monotonic()
+                if remaining > 0:
+                    time.sleep(remaining)
+            completed_frame_id = int(
+                world.tick(float(carla_config["timeout_seconds"]))
+            )
+            next_tick_at = M5.resynchronize_tick_deadline(
+                next_tick_at, time.monotonic(), period
+            )
+            completed_snapshot = world.get_snapshot()
+            if int(completed_snapshot.frame) != completed_frame_id:
+                raise RuntimeError("completed CARLA frame identity is inconsistent")
+            if pending_facts_transition is not None:
+                facts_state.complete_transition(
+                    pending_facts_transition[0],
+                    reset_completed=pending_facts_transition[1],
+                )
+            facts_sender.send(
+                facts_state.completed_frame(
+                    run_id=arguments.run_id,
+                    ego_actor_id=int(vehicle.id),
+                    frame_id=completed_frame_id,
+                    simulation_time=float(completed_snapshot.timestamp.elapsed_seconds),
+                )
             )
             frame_count += 1
             location = vehicle.get_location()
@@ -742,6 +777,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 "current_speed_kmh": current_speed_kmh,
             },
             scenario_runs=scenario_runs,
+            controller_facts={
+                "sent": facts_sender.sent,
+                "dropped": facts_sender.dropped,
+            },
         )
 
         if arguments.stop_file is not None and completed:
@@ -766,9 +805,58 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 shutdown_stop.set()
                 shutdown_thread.join()
         return 0
+    except (RuntimeError, ValueError, OSError) as error:
+        if (
+            facts_state is not None
+            and facts_sender is not None
+            and vehicle is not None
+            and facts_state.transition_state == "preparing"
+        ):
+            try:
+                if (
+                    "traffic_manager_port" in locals()
+                    and traffic_manager_port is not None
+                ):
+                    vehicle.set_autopilot(False, traffic_manager_port)
+                vehicle.apply_control(
+                    carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+                )
+                facts_state.fail_transition()
+                failed_frame_id = int(
+                    world.tick(float(carla_config["timeout_seconds"]))
+                )
+                failed_snapshot = world.get_snapshot()
+                if int(failed_snapshot.frame) != failed_frame_id:
+                    raise RuntimeError(
+                        "failed-transition CARLA frame identity is inconsistent"
+                    )
+                facts_sender.send(
+                    facts_state.completed_frame(
+                        run_id=arguments.run_id,
+                        ego_actor_id=int(vehicle.id),
+                        frame_id=failed_frame_id,
+                        simulation_time=float(
+                            failed_snapshot.timestamp.elapsed_seconds
+                        ),
+                    )
+                )
+                write_status(
+                    drive_mode="safe_stop",
+                    transition_state="failed",
+                    transition_error=str(error),
+                )
+                emit("drive_mode_transition_failed", error=str(error))
+            except (RuntimeError, ValueError, OSError) as evidence_error:
+                emit(
+                    "drive_mode_transition_failure_evidence_unavailable",
+                    error=str(evidence_error),
+                )
+        raise
     finally:
         if server is not None:
             server.stop()
+        if facts_sender is not None:
+            facts_sender.close()
         if collision_sensor is not None:
             try:
                 if collision_sensor.is_listening:
@@ -824,6 +912,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--stop-file", type=Path)
     parser.add_argument("--socket-file", required=True, type=Path)
     parser.add_argument("--token-file", required=True, type=Path)
+    parser.add_argument("--facts-socket-file", required=True, type=Path)
+    parser.add_argument("--run-id", required=True)
     return parser.parse_args()
 
 

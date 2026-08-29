@@ -101,6 +101,15 @@ def create_control_paths() -> tuple[Path, Path, Path]:
     return control_directory, socket_file, control_directory / "control.token"
 
 
+def controller_facts_socket_path(control_directory: Path) -> Path:
+    path = control_directory / "facts.sock"
+    if len(os.fsencode(path)) > PORTABLE_UNIX_SOCKET_PATH_MAX:
+        raise RuntimeError(
+            "controller facts socket path exceeds the portable Unix-domain limit"
+        )
+    return path
+
+
 def run_once(
     arguments: argparse.Namespace, config: Dict[str, Any], sequence: int
 ) -> bool:
@@ -113,6 +122,7 @@ def run_once(
     gate_file = run_directory / "start.gate"
     stop_file = run_directory / "stop.gate"
     control_directory, socket_file, token_file = create_control_paths()
+    facts_socket_file = controller_facts_socket_path(control_directory)
     manifest_path = run_directory / "manifest.json"
     log = M5.StructuredLog(run_directory / "events.jsonl")
     started_at = time.monotonic()
@@ -127,6 +137,8 @@ def run_once(
         "--stop-file", str(stop_file),
         "--socket-file", str(socket_file),
         "--token-file", str(token_file),
+        "--facts-socket-file", str(facts_socket_file),
+        "--run-id", run_id,
     ]
     runtime_command = M5.runtime_command(
         arguments.runtime,
@@ -134,6 +146,12 @@ def run_once(
         arguments.certificate,
         arguments.private_key,
         not arguments.headless,
+    )
+    runtime_command.extend(
+        [
+            "--control-facts-socket", str(facts_socket_file),
+            "--simulator-run-id", run_id,
+        ]
     )
     manifest: Dict[str, Any] = {
         "schema_version": 1,
