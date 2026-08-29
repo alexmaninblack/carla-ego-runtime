@@ -1,11 +1,14 @@
 #include "carla_ego_runtime/vss.hpp"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -55,6 +58,9 @@ std::size_t CountControlResetFacts(
 int main() {
   using namespace carla_ego_runtime;
 
+  static_assert(!std::is_default_constructible_v<SimulatorControlFacts>,
+                "control facts must not fabricate a default safe state");
+
   NormalizedVehicleState state;
   state.run_id = "run-a";
   state.ego_vehicle_id = "9";
@@ -81,14 +87,9 @@ int main() {
   gnss.longitude_deg = 13.404954;
   gnss.altitude_m = 37.25;
 
-  SimulatorControlFacts control_facts;
-  control_facts.source_frame_id = state.frame_id;
-  control_facts.active_mode = SimulatorDriveMode::kSafeStop;
-  control_facts.transition_state = SimulatorTransitionState::kStable;
-  control_facts.control_generation = 7;
-  control_facts.reset_generation = 3;
-  control_facts.reset_in_progress = false;
-  control_facts.reset_discontinuity = true;
+  const SimulatorControlFacts control_facts{
+      state.frame_id, SimulatorDriveMode::kSafeStop,
+      SimulatorTransitionState::kStable, 7, 3, false, true};
 
   const auto snapshot = ProjectToVss(state, gnss, control_facts);
   Check(snapshot.timestamp == "1970-01-01T00:00:01.234Z",
@@ -181,6 +182,46 @@ int main() {
           std::string(path) + " retains the physical frame timestamp");
   }
 
+  const std::array<std::pair<SimulatorDriveMode, std::string>, 4> mode_cases{{
+      {SimulatorDriveMode::kSafeStop, "SAFE_STOP"},
+      {SimulatorDriveMode::kScenario, "SCENARIO"},
+      {SimulatorDriveMode::kManual, "MANUAL"},
+      {SimulatorDriveMode::kAutopilot, "AUTOPILOT"},
+  }};
+  for (const auto &[mode, expected] : mode_cases) {
+    auto facts = control_facts;
+    facts.active_mode = mode;
+    const auto mapped = ProjectToVss(state, std::nullopt, facts);
+    const auto *point =
+        Find(mapped, "Vehicle.CarlaSimulation.Control.ActiveMode");
+    Check(CountControlResetFacts(mapped) == 6 && point != nullptr,
+          expected + " drive mode emits one complete fact group");
+    if (point != nullptr) {
+      Check(std::get<std::string>(point->value) == expected,
+            expected + " drive mode mapping is exact");
+    }
+  }
+
+  const std::array<std::pair<SimulatorTransitionState, std::string>, 3>
+      transition_cases{{
+          {SimulatorTransitionState::kStable, "STABLE"},
+          {SimulatorTransitionState::kPreparing, "PREPARING"},
+          {SimulatorTransitionState::kFailed, "FAILED"},
+      }};
+  for (const auto &[transition, expected] : transition_cases) {
+    auto facts = control_facts;
+    facts.transition_state = transition;
+    const auto mapped = ProjectToVss(state, std::nullopt, facts);
+    const auto *point =
+        Find(mapped, "Vehicle.CarlaSimulation.Control.TransitionState");
+    Check(CountControlResetFacts(mapped) == 6 && point != nullptr,
+          expected + " transition emits one complete fact group");
+    if (point != nullptr) {
+      Check(std::get<std::string>(point->value) == expected,
+            expected + " transition mapping is exact");
+    }
+  }
+
   LatestVssSignalStore store;
   Check(store.Publish(snapshot), "first frame accepted");
   Check(!store.Publish(snapshot), "duplicate frame rejected");
@@ -223,6 +264,14 @@ int main() {
       ProjectToVss(state, std::nullopt, invalid_mode);
   Check(CountControlResetFacts(invalid_context) == 0,
         "invalid closed enum omits the complete group without a default");
+
+  auto invalid_transition = control_facts;
+  invalid_transition.transition_state =
+      static_cast<SimulatorTransitionState>(255);
+  const auto invalid_transition_context =
+      ProjectToVss(state, std::nullopt, invalid_transition);
+  Check(CountControlResetFacts(invalid_transition_context) == 0,
+        "invalid transition omits the complete group without a default");
 
   if (failures == 0) {
     std::cout << "VSS projection tests passed\n";

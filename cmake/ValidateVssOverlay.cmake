@@ -51,6 +51,25 @@ foreach(fragment IN ITEMS
   endif()
 endforeach()
 
+function(require_exact_sensor path datatype)
+  string(REPLACE "." "\\." escaped_path "${path}")
+  string(REGEX MATCH
+    "${escaped_path}:[ \t]*[\r\n]+[ \t]+datatype:[ \t]+${datatype}[ \t]*[\r\n]+[ \t]+type:[ \t]+sensor([ \t]*[\r\n]|$)"
+    sensor_definition
+    "${overlay}")
+  if(NOT sensor_definition)
+    message(FATAL_ERROR
+      "VSS overlay path ${path} must have datatype ${datatype} and type sensor")
+  endif()
+endfunction()
+
+require_exact_sensor("Vehicle.CarlaSimulation.Control.ActiveMode" "string")
+require_exact_sensor("Vehicle.CarlaSimulation.Control.TransitionState" "string")
+require_exact_sensor("Vehicle.CarlaSimulation.Control.Generation" "uint64")
+require_exact_sensor("Vehicle.CarlaSimulation.Reset.Generation" "uint64")
+require_exact_sensor("Vehicle.CarlaSimulation.Reset.InProgress" "boolean")
+require_exact_sensor("Vehicle.CarlaSimulation.Reset.Discontinuity" "boolean")
+
 foreach(value IN ITEMS
     "SAFE_STOP"
     "SCENARIO"
