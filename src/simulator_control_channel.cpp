@@ -601,6 +601,11 @@ void SimulatorControlJoin::NotePeerRejection() {
   Increment(diagnostics_.peer_rejections);
 }
 
+void SimulatorControlJoin::InvalidateControl() noexcept {
+  control_.clear();
+  matches_.clear();
+}
+
 const SimulatorControlDiagnostics &SimulatorControlJoin::diagnostics() const {
   return diagnostics_;
 }
@@ -736,23 +741,16 @@ std::optional<SimulatorControlFacts> SimulatorControlChannel::WaitFor(
   const auto started = SimulatorControlJoin::Clock::now();
   join_.OfferPhysical(frame, started);
   while (true) {
-    if (auto match = join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
-      return match;
-    }
     if (state_ == State::kListening) {
       (void)AcceptOne();
     }
     while (state_ == State::kConnected && ReceiveOne()) {
-      if (auto match =
-              join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
-        return match;
-      }
-    }
-    if (auto match = join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
-      return match;
     }
     if (state_ == State::kUnavailable) {
       return std::nullopt;
+    }
+    if (auto match = join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
+      return match;
     }
     const auto now = SimulatorControlJoin::Clock::now();
     join_.Expire(now);
@@ -800,7 +798,7 @@ bool SimulatorControlChannel::AcceptOne() {
       !PeerHasSameEffectiveUid(accepted)) {
     join_.NotePeerRejection();
     ::close(accepted);
-    state_ = State::kUnavailable;
+    MakeUnavailable();
     return true;
   }
   connection_fd_ = accepted;
@@ -879,6 +877,7 @@ void SimulatorControlChannel::MakeUnavailable(bool malformed_partial) noexcept {
   if (malformed_partial) {
     join_.NoteMalformedRecord();
   }
+  join_.InvalidateControl();
   if (connection_fd_ >= 0) {
     ::close(connection_fd_);
     connection_fd_ = -1;

@@ -125,6 +125,12 @@ and one non-blocking write attempt per completed frame. Backpressure, a
 partial write, missing receiver, EOF, disconnect or process shutdown makes the
 channel unavailable, never blocks CARLA ticks and never changes controller
 behavior. There is no reconnect, replay or history protocol within the run.
+The unprivileged native C++ macOS suite proves the successful same-UID
+`getpeereid` receiver path. A real receiver-side wrong-UID Darwin negative
+requires a second effective UID and remains an environment qualification; no
+privileged peer or mocked credential is presented as native receiver evidence.
+The Python sender unit test separately injection-tests its rejection branch and
+is not OS-level wrong-UID proof.
 
 The C++ observer accepts only a closed version-1 record with exact types and
 enums. It joins facts to physical telemetry only when frame ID and binary

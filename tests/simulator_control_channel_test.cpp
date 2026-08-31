@@ -248,6 +248,13 @@ void CheckJoin() {
   Check(bounded.diagnostics().capacity_evictions == 1,
         "fifth unmatched control record evicts exactly the oldest");
 
+  SimulatorControlJoin invalidated("run-a", 42);
+  invalidated.OfferControl(Record(40, 2.0, 40), started);
+  invalidated.OfferPhysical({"run-a", 42, 40, 2.0}, started);
+  invalidated.InvalidateControl();
+  Check(!invalidated.TakeMatch(40, 2.0).has_value(),
+        "transport loss invalidates a retained control match");
+
   SimulatorControlJoin restarted("run-b", 42);
   auto post_restart = Record(1, 0.05, 0);
   post_restart.run_id = "run-b";
@@ -486,6 +493,43 @@ void CheckPlatformTransport() {
           "EOF with a partial frame fails closed");
     Check(truncated.diagnostics().malformed_records == 1,
           "truncated frame is counted before JSON");
+  }
+
+  {
+    SimulatorControlChannel buffered({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    Check(producer >= 0 &&
+              SendAll(producer, Frame(Payload(8, 0.40, 8, 0, false))),
+          "future controller record reaches the receiver");
+    Check(!buffered.WaitFor({"run-a", 42, 7, 0.35},
+                            std::chrono::milliseconds(5))
+               .has_value(),
+          "future controller record remains buffered without a physical match");
+    if (producer >= 0) {
+      ::close(producer);
+    }
+    Check(!buffered.WaitFor({"run-a", 42, 8, 0.40},
+                            std::chrono::milliseconds(20))
+               .has_value(),
+          "EOF invalidates a buffered future controller record");
+  }
+
+  {
+    SimulatorControlChannel invalid_after_valid({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    const std::string valid_then_invalid =
+        Frame(Payload(9, 0.45, 9, 0, false)) + std::string{"\0\0\0\0", 4};
+    Check(producer >= 0 && SendAll(producer, valid_then_invalid),
+          "valid frame followed by an invalid length reaches the receiver");
+    Check(!invalid_after_valid.WaitFor({"run-a", 42, 9, 0.45},
+                                       std::chrono::milliseconds(20))
+               .has_value(),
+          "invalid trailing length clears the earlier retained match");
+    Check(invalid_after_valid.diagnostics().malformed_records == 1,
+          "invalid trailing length records one malformed diagnostic");
+    if (producer >= 0) {
+      ::close(producer);
+    }
   }
 
   {

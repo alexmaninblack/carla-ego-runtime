@@ -80,6 +80,7 @@ class SimulatorControlJoin {
   void NoteConnectionAccepted();
   void NoteMalformedRecord();
   void NotePeerRejection();
+  void InvalidateControl() noexcept;
 
   const SimulatorControlDiagnostics &diagnostics() const;
 
