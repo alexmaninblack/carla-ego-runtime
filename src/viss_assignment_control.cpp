@@ -28,6 +28,11 @@
 #include <utility>
 #include <vector>
 
+extern "C" __attribute__((weak, noinline)) bool
+carla_ego_runtime_assignment_fail_after_bind_for_test() {
+  return false;
+}
+
 namespace carla_ego_runtime {
 namespace {
 
@@ -446,21 +451,51 @@ public:
       throw std::logic_error("VISS assignment control is already running");
     }
     ValidateSocketParent(config_.socket_file);
-    boost::system::error_code error;
-    acceptor_.open(LocalSocket(), error);
-    ThrowOnError(error, "open VISS assignment socket");
-    acceptor_.bind(LocalSocket::endpoint(config_.socket_file), error);
-    ThrowOnError(error, "bind VISS assignment socket");
-    if (chmod(config_.socket_file.c_str(), 0600) != 0 ||
-        lstat(config_.socket_file.c_str(), &owned_socket_) != 0 ||
-        !S_ISSOCK(owned_socket_.st_mode) || owned_socket_.st_uid != geteuid()) {
-      throw std::runtime_error("could not secure VISS assignment socket");
+    try {
+      boost::system::error_code error;
+      acceptor_.open(LocalSocket(), error);
+      ThrowOnError(error, "open VISS assignment socket");
+      acceptor_.bind(LocalSocket::endpoint(config_.socket_file), error);
+      ThrowOnError(error, "bind VISS assignment socket");
+
+      struct stat bound_socket{};
+      if (lstat(config_.socket_file.c_str(), &bound_socket) != 0 ||
+          !S_ISSOCK(bound_socket.st_mode) || bound_socket.st_uid != geteuid()) {
+        throw std::runtime_error("could not identify VISS assignment socket");
+      }
+      owned_socket_ = bound_socket;
+      owns_socket_ = true;
+
+      // Product binaries use the weak default-false definition above. The
+      // test links a strong definition to exercise the otherwise
+      // non-deterministic failure window after bind and before security/listen
+      // completion.
+      if (carla_ego_runtime_assignment_fail_after_bind_for_test()) {
+        throw std::runtime_error("injected VISS assignment post-bind failure");
+      }
+
+      struct stat secured_socket{};
+      if (chmod(config_.socket_file.c_str(), 0600) != 0 ||
+          lstat(config_.socket_file.c_str(), &secured_socket) != 0 ||
+          !S_ISSOCK(secured_socket.st_mode) ||
+          secured_socket.st_uid != geteuid() ||
+          (secured_socket.st_mode & 0777) != 0600 ||
+          secured_socket.st_dev != owned_socket_.st_dev ||
+          secured_socket.st_ino != owned_socket_.st_ino) {
+        throw std::runtime_error("could not secure VISS assignment socket");
+      }
+      acceptor_.listen(asio::socket_base::max_listen_connections, error);
+      ThrowOnError(error, "listen on VISS assignment socket");
+      started_ = true;
+      AcceptNext();
+    } catch (...) {
+      started_ = false;
+      boost::system::error_code ignored;
+      acceptor_.cancel(ignored);
+      acceptor_.close(ignored);
+      RemoveOwnedSocket();
+      throw;
     }
-    owns_socket_ = true;
-    acceptor_.listen(asio::socket_base::max_listen_connections, error);
-    ThrowOnError(error, "listen on VISS assignment socket");
-    started_ = true;
-    AcceptNext();
   }
 
   void Stop() {

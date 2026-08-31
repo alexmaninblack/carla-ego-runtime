@@ -5,7 +5,9 @@
 
 #include <sys/stat.h>
 
+#include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -20,6 +22,7 @@ namespace json = boost::json;
 using LocalSocket = asio::local::stream_protocol;
 
 int failures = 0;
+std::atomic<bool> fail_after_bind{false};
 
 void Check(bool condition, const std::string &message) {
   if (!condition) {
@@ -78,6 +81,10 @@ private:
 };
 
 } // namespace
+
+extern "C" bool carla_ego_runtime_assignment_fail_after_bind_for_test() {
+  return fail_after_bind.exchange(false);
+}
 
 int main() {
   using namespace carla_ego_runtime;
@@ -308,6 +315,62 @@ int main() {
           "owned assignment socket is removed on stop");
   } catch (const std::exception &error) {
     Check(false, std::string("assignment socket fixture: ") + error.what());
+  }
+
+  try {
+    TemporaryDirectory directory;
+    const auto socket_file = (directory.path() / "retry.sock").string();
+    asio::io_context io_context;
+    VissAssignmentState retry_state(3, dashboard_sha, std::nullopt);
+    VissAssignmentControl control(
+        io_context, {socket_file}, retry_state, [] { return 0; },
+        [] { return VissActiveRoleCounts{}; }, [](VissAssignmentMutation) {});
+
+    fail_after_bind.store(true);
+    bool post_bind_failure = false;
+    try {
+      control.Start();
+    } catch (const std::exception &) {
+      post_bind_failure = true;
+    }
+    Check(post_bind_failure, "post-bind start failure is exercised");
+    Check(!std::filesystem::exists(socket_file),
+          "post-bind start failure removes the owned socket");
+
+    control.Start();
+    Check(std::filesystem::is_socket(socket_file),
+          "same assignment-control object retries after partial start");
+    control.Stop();
+    Check(!std::filesystem::exists(socket_file),
+          "retried assignment socket is removed on stop");
+  } catch (const std::exception &error) {
+    Check(false, std::string("assignment retry fixture: ") + error.what());
+  }
+
+  try {
+    TemporaryDirectory directory;
+    const auto socket_path = directory.path() / "replace.sock";
+    const auto moved_socket = directory.path() / "moved-owned.sock";
+    asio::io_context io_context;
+    VissAssignmentState replace_state(4, dashboard_sha, std::nullopt);
+    VissAssignmentControl control(
+        io_context, {socket_path.string()}, replace_state, [] { return 0; },
+        [] { return VissActiveRoleCounts{}; }, [](VissAssignmentMutation) {});
+
+    control.Start();
+    std::filesystem::rename(socket_path, moved_socket);
+    {
+      std::ofstream replacement(socket_path);
+      replacement << "non-owned sentinel";
+    }
+    control.Stop();
+    Check(std::filesystem::is_regular_file(socket_path),
+          "stop does not delete a replacement non-owned path");
+    Check(std::filesystem::is_socket(moved_socket),
+          "inode-safe cleanup does not follow the moved owned socket");
+  } catch (const std::exception &error) {
+    Check(false,
+          std::string("assignment replacement fixture: ") + error.what());
   }
 
   if (failures == 0) {
