@@ -105,21 +105,26 @@ VSS tree.
 `run_m6.py` creates a second, short per-run Unix socket path in the same `0700`
 runtime directory. It passes an explicit shared run ID and this facts path to
 the Python tick owner and the C++ observer. The facts transport is independent
-of the authenticated operator-control stream: it is one non-blocking
-`AF_UNIX`/`SOCK_DGRAM` JSON record after each successful real `world.tick`.
+of the authenticated operator-control stream: it is one connected,
+non-blocking `AF_UNIX`/`SOCK_STREAM` record after each successful real
+`world.tick`. Every UTF-8 JSON body is preceded by one unsigned big-endian
+32-bit body length.
 The record contains only `schemaVersion`, run and ego identity, the returned
 CARLA frame and simulation time, the actually applied mode, transition state,
 control and reset generations, reset-in-progress and one-frame reset
 discontinuity. It never contains a command token, session, operator identity,
 Safe Stop conclusion or history.
 
-The C++ process binds the datagram receiver before the startup gate, requires
-an owner-only `0700` directory and `0600` socket, verifies Linux kernel peer
-credentials and pins the first valid same-run/same-ego producer PID. The 4096
-byte maximum and `MSG_TRUNC` are enforced before JSON parsing. Send
-backpressure, a missing receiver or process shutdown increments telemetry-loss
-evidence in the controller and never blocks CARLA ticks or changes controller
-behavior.
+The C++ process binds and listens before the startup gate, requires an
+owner-only `0700` directory and `0600` socket, and accepts exactly one
+connection for the run. Both endpoints verify the peer effective UID:
+`getpeereid` on Darwin and `SO_PEERCRED` on Linux. The receiver retains at most
+one bounded partial frame and rejects zero or greater-than-4096 body lengths
+before JSON parsing. The producer makes one non-blocking connection attempt
+and one non-blocking write attempt per completed frame. Backpressure, a
+partial write, missing receiver, EOF, disconnect or process shutdown makes the
+channel unavailable, never blocks CARLA ticks and never changes controller
+behavior. There is no reconnect, replay or history protocol within the run.
 
 The C++ observer accepts only a closed version-1 record with exact types and
 enums. It joins facts to physical telemetry only when frame ID and binary

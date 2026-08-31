@@ -263,7 +263,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             raise RuntimeError(f"start spawn point {start_index} is occupied")
         world.tick(float(carla_config["timeout_seconds"]))
         facts_state = PROTOCOL.ControllerFactsState()
-        facts_sender = PROTOCOL.ControllerFactsDatagramSender(
+        facts_sender = PROTOCOL.ControllerFactsStreamSender(
             arguments.facts_socket_file
         )
 

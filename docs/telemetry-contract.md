@@ -114,11 +114,17 @@ update. All six points use the physical frame's existing UTC source timestamp;
 VISS encodes boolean datapoint values as the strings `true` and `false`, not
 numeric substitutes.
 
-The live facts handoff is a private, non-blocking Unix datagram path created
-for one run. The receiver holds at most four unmatched physical and four
-unmatched controller records for at most 250 ms, pins one Linux peer PID after
-valid run/ego attribution, and keeps saturating diagnostic counters only. It
-does not use `controller-status.json`, retain history or implement reconnect.
+The live facts handoff is one private, connected, non-blocking Unix stream
+created for one run. Its owner-only listener accepts exactly one connection;
+both endpoints verify the peer effective UID through Darwin `getpeereid` or
+Linux `SO_PEERCRED`. Each body has an unsigned big-endian 32-bit length, is at
+most 4096 bytes, and the receiver retains at most one bounded partial frame.
+Zero/oversize/truncated input, backpressure, partial write, EOF or disconnect
+makes the channel unavailable. The receiver holds at most four unmatched
+physical and four unmatched controller records for at most 250 ms and keeps
+saturating diagnostic counters only. It does not use
+`controller-status.json`, reuse last-known data, retain history or implement
+reconnect.
 The purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS role and live qualification
 remain separate work.
 

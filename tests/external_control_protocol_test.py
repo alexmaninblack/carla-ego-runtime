@@ -1,21 +1,24 @@
 import socket
 import json
+import os
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY))
 
 from tools.external_control_protocol import (
-    ControllerFactsDatagramSender,
+    ControllerFactsStreamSender,
     ControllerFactsState,
     ControlProtocolError,
     ExternalControlState,
     LocalControlServer,
     encode_controller_gateway_record,
+    frame_controller_gateway_record,
     request,
 )
 
@@ -429,12 +432,13 @@ class ControllerGatewayHandoffTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=name):
                 encode_controller_gateway_record(**invalid)
 
-    def test_nonblocking_datagram_sender_uses_one_atomic_record(self):
+    def test_nonblocking_stream_sender_uses_uint32_be_framing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "facts.sock"
-            receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            receiver = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             receiver.bind(str(path))
-            sender = ControllerFactsDatagramSender(path)
+            receiver.listen(1)
+            sender = ControllerFactsStreamSender(path)
             payload = encode_controller_gateway_record(
                 run_id="run-a",
                 ego_actor_id=42,
@@ -447,25 +451,95 @@ class ControllerGatewayHandoffTests(unittest.TestCase):
                 reset_in_progress=False,
                 reset_discontinuity=False,
             )
+            connection = None
             try:
                 self.assertTrue(sender.send(payload))
-                self.assertEqual(receiver.recv(4096), payload)
+                connection, _ = receiver.accept()
+                framed = b""
+                while len(framed) < len(payload) + 4:
+                    framed += connection.recv(len(payload) + 4 - len(framed))
+                self.assertEqual(framed[:4], len(payload).to_bytes(4, "big"))
+                self.assertEqual(framed[4:], payload)
                 self.assertEqual(sender.sent, 1)
                 self.assertEqual(sender.dropped, 0)
             finally:
                 sender.close()
+                if connection is not None:
+                    connection.close()
                 receiver.close()
 
-    def test_disconnected_receiver_is_explicit_telemetry_loss(self):
+    def test_missing_receiver_is_loss_and_never_reconnects(self):
         with tempfile.TemporaryDirectory() as directory:
-            sender = ControllerFactsDatagramSender(
-                Path(directory) / "missing.sock"
-            )
+            path = Path(directory) / "missing.sock"
+            sender = ControllerFactsStreamSender(path)
+            receiver = None
             try:
                 self.assertFalse(sender.send(b"{}"))
                 self.assertEqual(sender.dropped, 1)
+                receiver = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                receiver.bind(str(path))
+                receiver.listen(1)
+                receiver.settimeout(0.05)
+                self.assertFalse(sender.send(b"{}"))
+                self.assertEqual(sender.dropped, 2)
+                with self.assertRaises(socket.timeout):
+                    receiver.accept()
             finally:
                 sender.close()
+                if receiver is not None:
+                    receiver.close()
+
+    def test_wrong_peer_uid_fails_before_a_record_is_sent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "facts.sock"
+            receiver = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            receiver.bind(str(path))
+            receiver.listen(1)
+            sender = ControllerFactsStreamSender(path)
+            connection = None
+            try:
+                with mock.patch(
+                    "tools.external_control_protocol._peer_effective_uid",
+                    return_value=os.geteuid() + 1,
+                ):
+                    self.assertFalse(sender.send(b"{}"))
+                connection, _ = receiver.accept()
+                self.assertEqual(connection.recv(1), b"")
+                self.assertEqual(sender.sent, 0)
+                self.assertEqual(sender.dropped, 1)
+            finally:
+                sender.close()
+                if connection is not None:
+                    connection.close()
+                receiver.close()
+
+    def test_partial_write_or_backpressure_permanently_closes_channel(self):
+        for result in (1, BlockingIOError()):
+            fake_socket = mock.Mock()
+            if isinstance(result, BaseException):
+                fake_socket.send.side_effect = result
+            else:
+                fake_socket.send.return_value = result
+            with mock.patch(
+                "tools.external_control_protocol.socket.socket",
+                return_value=fake_socket,
+            ), mock.patch(
+                "tools.external_control_protocol._peer_effective_uid",
+                return_value=os.geteuid(),
+            ):
+                sender = ControllerFactsStreamSender(Path("/tmp/facts.sock"))
+                self.assertFalse(sender.send(b"{}"))
+                self.assertFalse(sender.send(b"{}"))
+                self.assertEqual(fake_socket.connect.call_count, 1)
+                self.assertEqual(fake_socket.send.call_count, 1)
+                self.assertEqual(sender.sent, 0)
+                self.assertEqual(sender.dropped, 2)
+
+    def test_frame_rejects_zero_or_oversize_body(self):
+        with self.assertRaises(ValueError):
+            frame_controller_gateway_record(b"")
+        with self.assertRaises(ValueError):
+            frame_controller_gateway_record(b"x" * 4097)
 
 
 class LocalControlServerTests(unittest.TestCase):

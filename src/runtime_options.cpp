@@ -322,7 +322,7 @@ Options:
       --viss-max-pending-messages N
                                 Outbound queue cap per client (default: 8)
       --control-facts-socket FILE
-                                Private controller-to-Gateway datagram socket
+                                Private controller-to-Gateway stream socket
       --simulator-run-id ID     Per-run identity shared with the controller
       --observe-ticks           Do not own or advance the simulation clock;
                                 wait for another designated tick owner

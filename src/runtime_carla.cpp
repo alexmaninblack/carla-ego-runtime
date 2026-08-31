@@ -596,7 +596,7 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     control_channel = std::make_unique<SimulatorControlChannel>(
         SimulatorControlChannelConfig{options.control_facts_socket_file, run_id,
                                       static_cast<std::uint64_t>(vehicle->GetId())});
-    std::cout << "Controller facts: private frame-coherent datagram handoff enabled\n";
+    std::cout << "Controller facts: private frame-coherent stream handoff enabled\n";
   }
   WheelRadii wheel_radii;
   const auto physics = vehicle->GetPhysicsControl();
@@ -734,7 +734,7 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
   if (control_channel) {
     const auto diagnostics = control_channel->diagnostics();
     std::cout << "Controller facts accepted="
-              << diagnostics.datagrams_accepted
+              << diagnostics.frames_accepted
               << " matched=" << diagnostics.records_matched
               << " malformed=" << diagnostics.malformed_records
               << " wrong_identity=" << diagnostics.wrong_identity_records

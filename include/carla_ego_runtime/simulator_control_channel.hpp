@@ -2,6 +2,7 @@
 
 #include "carla_ego_runtime/simulator_control_facts.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +13,8 @@
 
 namespace carla_ego_runtime {
 
-inline constexpr std::size_t kMaximumControlDatagramBytes = 4096;
+inline constexpr std::size_t kMaximumControlFrameBodyBytes = 4096;
+inline constexpr std::size_t kControlFrameLengthBytes = 4;
 inline constexpr std::size_t kMaximumUnmatchedSimulatorRecords = 4;
 inline constexpr auto kMaximumSimulatorRecordResidence =
     std::chrono::milliseconds(250);
@@ -46,8 +48,9 @@ SimulatorControlDecodeResult DecodeSimulatorControlRecord(
     std::string_view payload);
 
 struct SimulatorControlDiagnostics {
-  std::uint64_t datagrams_received = 0;
-  std::uint64_t datagrams_accepted = 0;
+  std::uint64_t connections_accepted = 0;
+  std::uint64_t frames_received = 0;
+  std::uint64_t frames_accepted = 0;
   std::uint64_t records_matched = 0;
   std::uint64_t malformed_records = 0;
   std::uint64_t wrong_identity_records = 0;
@@ -73,7 +76,8 @@ class SimulatorControlJoin {
   std::optional<SimulatorControlFacts> TakeMatch(std::uint64_t frame_id,
                                                   double simulation_time_s);
   void Expire(Clock::time_point now);
-  void NoteDatagramReceived();
+  void NoteFrameReceived();
+  void NoteConnectionAccepted();
   void NoteMalformedRecord();
   void NotePeerRejection();
 
@@ -115,8 +119,8 @@ struct SimulatorControlChannelConfig {
   std::uint64_t expected_ego_actor_id;
 };
 
-// Linux runtime transport. It binds one private AF_UNIX/SOCK_DGRAM endpoint,
-// verifies kernel-supplied peer credentials, pins the first producer PID and
+// Cross-platform runtime transport. It listens on one private
+// AF_UNIX/SOCK_STREAM endpoint, accepts one same-effective-UID producer and
 // never turns transport loss into a controller or Safe Stop conclusion.
 class SimulatorControlChannel {
  public:
@@ -132,13 +136,22 @@ class SimulatorControlChannel {
   SimulatorControlDiagnostics diagnostics() const;
 
  private:
+  enum class State { kListening, kConnected, kUnavailable };
+
+  bool AcceptOne();
   bool ReceiveOne();
+  bool ConsumeFrames();
+  void MakeUnavailable(bool malformed_partial = false) noexcept;
   void RemoveOwnedSocket() noexcept;
 
   SimulatorControlChannelConfig config_;
   SimulatorControlJoin join_;
-  int socket_fd_ = -1;
-  std::optional<std::int64_t> producer_pid_;
+  int listener_fd_ = -1;
+  int connection_fd_ = -1;
+  State state_ = State::kListening;
+  std::array<char, kControlFrameLengthBytes + kMaximumControlFrameBodyBytes>
+      receive_buffer_{};
+  std::size_t receive_size_ = 0;
   std::uint64_t socket_device_ = 0;
   std::uint64_t socket_inode_ = 0;
 };

@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
-import hmac
+import ctypes
 import datetime as dt
+import hmac
 import json
 import math
 import os
 import secrets
 import socket
+import struct
+import sys
 import threading
 import time
 import uuid
@@ -23,7 +26,7 @@ SUPPORTED_VERSIONS = {1, 2, 3}
 DRIVE_MODES = {"safe_stop", "manual", "autopilot", "scenario"}
 DEFAULT_AVAILABLE_MODES = {"safe_stop", "manual", "autopilot"}
 MAX_MESSAGE_BYTES = 16 * 1024
-MAX_CONTROL_FACTS_DATAGRAM_BYTES = 4096
+MAX_CONTROL_FACTS_BODY_BYTES = 4096
 SAFE_CONTROL = {"throttle": 0.0, "brake": 1.0, "steering": 0.0}
 
 
@@ -108,8 +111,8 @@ def encode_controller_gateway_record(
     payload = json.dumps(
         record, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    if len(payload) > MAX_CONTROL_FACTS_DATAGRAM_BYTES:
-        raise ValueError("controller facts datagram exceeds 4096 bytes")
+    if len(payload) > MAX_CONTROL_FACTS_BODY_BYTES:
+        raise ValueError("controller facts body exceeds 4096 bytes")
     return payload
 
 
@@ -192,30 +195,98 @@ class ControllerFactsState:
         return payload
 
 
-class ControllerFactsDatagramSender:
+def frame_controller_gateway_record(payload: bytes) -> bytes:
+    if (
+        not isinstance(payload, bytes)
+        or not payload
+        or len(payload) > MAX_CONTROL_FACTS_BODY_BYTES
+    ):
+        raise ValueError("controller facts body is invalid")
+    return struct.pack("!I", len(payload)) + payload
+
+
+def _peer_effective_uid(connection: socket.socket) -> int:
+    if sys.platform == "darwin":
+        peer_uid = ctypes.c_uint()
+        peer_gid = ctypes.c_uint()
+        getpeereid = ctypes.CDLL(None, use_errno=True).getpeereid
+        getpeereid.argtypes = [
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint),
+        ]
+        getpeereid.restype = ctypes.c_int
+        if getpeereid(
+            connection.fileno(), ctypes.byref(peer_uid), ctypes.byref(peer_gid)
+        ) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+        return int(peer_uid.value)
+    if sys.platform.startswith("linux"):
+        credentials = connection.getsockopt(
+            socket.SOL_SOCKET,
+            getattr(socket, "SO_PEERCRED", 17),
+            struct.calcsize("3i"),
+        )
+        _, peer_uid, _ = struct.unpack("3i", credentials)
+        return int(peer_uid)
+    raise OSError("controller facts peer credentials are unsupported")
+
+
+class ControllerFactsStreamSender:
     def __init__(self, socket_path: Path) -> None:
         self.socket_path = socket_path
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self._socket.setblocking(False)
+        self._socket: Optional[socket.socket] = None
+        self._connection_attempted = False
+        self._available = True
         self.sent = 0
         self.dropped = 0
 
     def send(self, payload: bytes) -> bool:
-        if not isinstance(payload, bytes) or len(payload) > MAX_CONTROL_FACTS_DATAGRAM_BYTES:
-            raise ValueError("controller facts payload is invalid")
-        try:
-            sent = self._socket.sendto(payload, str(self.socket_path))
-        except (BlockingIOError, FileNotFoundError, ConnectionRefusedError, OSError):
+        frame = frame_controller_gateway_record(payload)
+        if not self._connect_once():
             self.dropped += 1
             return False
-        if sent != len(payload):
+        try:
+            sent = self._socket.send(frame, getattr(socket, "MSG_NOSIGNAL", 0))
+        except (BlockingIOError, BrokenPipeError, ConnectionResetError, OSError):
             self.dropped += 1
+            self._make_unavailable()
+            return False
+        if sent != len(frame):
+            self.dropped += 1
+            self._make_unavailable()
             return False
         self.sent += 1
         return True
 
+    def _connect_once(self) -> bool:
+        if self._socket is not None:
+            return True
+        if self._connection_attempted or not self._available:
+            return False
+        self._connection_attempted = True
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.setblocking(False)
+        try:
+            connection.connect(str(self.socket_path))
+            if _peer_effective_uid(connection) != os.geteuid():
+                raise PermissionError("controller facts peer UID does not match")
+        except (BlockingIOError, FileNotFoundError, ConnectionRefusedError, OSError):
+            connection.close()
+            self._available = False
+            return False
+        self._socket = connection
+        return True
+
+    def _make_unavailable(self) -> None:
+        self._available = False
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+
     def close(self) -> None:
-        self._socket.close()
+        self._make_unavailable()
 
 
 def _number(value: Any, name: str, minimum: float, maximum: float) -> float:

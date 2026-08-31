@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <limits>
 #include <poll.h>
 #include <stdexcept>
@@ -324,11 +325,38 @@ auto OldestIterator(Queue &queue) {
                           });
 }
 
+bool SetNonBlockingCloseOnExec(int descriptor) {
+  const int status_flags = ::fcntl(descriptor, F_GETFL, 0);
+  const int descriptor_flags = ::fcntl(descriptor, F_GETFD, 0);
+  return status_flags >= 0 && descriptor_flags >= 0 &&
+         ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) == 0 &&
+         ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) == 0;
+}
+
+bool PeerHasSameEffectiveUid(int descriptor) {
+#if defined(__APPLE__)
+  uid_t peer_uid = 0;
+  gid_t peer_gid = 0;
+  return ::getpeereid(descriptor, &peer_uid, &peer_gid) == 0 &&
+         peer_uid == ::geteuid();
+#elif defined(__linux__)
+  struct ucred credentials {};
+  socklen_t credentials_size = sizeof(credentials);
+  return ::getsockopt(descriptor, SOL_SOCKET, SO_PEERCRED, &credentials,
+                      &credentials_size) == 0 &&
+         credentials_size == sizeof(credentials) &&
+         credentials.uid == ::geteuid();
+#else
+  (void)descriptor;
+  return false;
+#endif
+}
+
 }  // namespace
 
 SimulatorControlDecodeResult DecodeSimulatorControlRecord(
     std::string_view payload) {
-  if (payload.empty() || payload.size() > kMaximumControlDatagramBytes ||
+  if (payload.empty() || payload.size() > kMaximumControlFrameBodyBytes ||
       !ValidUtf8(payload)) {
     return {std::nullopt, "payload is empty, oversize, or invalid UTF-8"};
   }
@@ -523,7 +551,7 @@ void SimulatorControlJoin::OfferControl(SimulatorControlRecord record,
   last_control_generation_ = record.control_generation;
   last_reset_generation_ = record.reset_generation;
   control_.push_back({std::move(record), received});
-  Increment(diagnostics_.datagrams_accepted);
+  Increment(diagnostics_.frames_accepted);
   MatchAvailable();
   EnforceCapacity();
 }
@@ -557,8 +585,12 @@ void SimulatorControlJoin::Expire(Clock::time_point now) {
   }
 }
 
-void SimulatorControlJoin::NoteDatagramReceived() {
-  Increment(diagnostics_.datagrams_received);
+void SimulatorControlJoin::NoteFrameReceived() {
+  Increment(diagnostics_.frames_received);
+}
+
+void SimulatorControlJoin::NoteConnectionAccepted() {
+  Increment(diagnostics_.connections_accepted);
 }
 
 void SimulatorControlJoin::NoteMalformedRecord() {
@@ -619,9 +651,9 @@ SimulatorControlChannel::SimulatorControlChannel(
     SimulatorControlChannelConfig config)
     : config_(std::move(config)),
       join_(config_.expected_run_id, config_.expected_ego_actor_id) {
-#if !defined(__linux__)
+#if !defined(__APPLE__) && !defined(__linux__)
   throw std::runtime_error(
-      "controller facts channel requires Linux peer credentials");
+      "controller facts channel requires Darwin or Linux peer credentials");
 #else
   if (config_.socket_path.empty()) {
     throw std::invalid_argument("controller facts socket path must not be empty");
@@ -644,34 +676,33 @@ SimulatorControlChannel::SimulatorControlChannel(
     throw std::runtime_error("controller facts socket path already exists");
   }
 
-  socket_fd_ = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-  if (socket_fd_ < 0) {
+  listener_fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  if (listener_fd_ < 0) {
     throw std::runtime_error("failed to create controller facts socket: " +
                              std::string(std::strerror(errno)));
   }
-  int pass_credentials = 1;
-  if (::setsockopt(socket_fd_, SOL_SOCKET, SO_PASSCRED, &pass_credentials,
-                   sizeof(pass_credentials)) != 0) {
+  if (!SetNonBlockingCloseOnExec(listener_fd_)) {
     const auto error = std::string(std::strerror(errno));
-    ::close(socket_fd_);
-    socket_fd_ = -1;
-    throw std::runtime_error("failed to require controller peer credentials: " +
-                             error);
+    ::close(listener_fd_);
+    listener_fd_ = -1;
+    throw std::runtime_error(
+        "failed to make controller facts listener non-blocking: " + error);
   }
   address.sun_family = AF_UNIX;
   std::memcpy(address.sun_path, config_.socket_path.c_str(),
               config_.socket_path.size() + 1);
-  if (::bind(socket_fd_, reinterpret_cast<const sockaddr *>(&address),
+  if (::bind(listener_fd_, reinterpret_cast<const sockaddr *>(&address),
              sizeof(address)) != 0) {
     const auto error = std::string(std::strerror(errno));
-    RemoveOwnedSocket();
+    ::close(listener_fd_);
+    listener_fd_ = -1;
     throw std::runtime_error("failed to bind private controller facts socket: " +
                              error);
   }
   if (::chmod(config_.socket_path.c_str(), 0600) != 0) {
     const auto error = std::string(std::strerror(errno));
-    ::close(socket_fd_);
-    socket_fd_ = -1;
+    ::close(listener_fd_);
+    listener_fd_ = -1;
     ::unlink(config_.socket_path.c_str());
     throw std::runtime_error(
         "failed to restrict controller facts socket: " + error);
@@ -681,13 +712,19 @@ SimulatorControlChannel::SimulatorControlChannel(
       !S_ISSOCK(socket_status.st_mode) ||
       (socket_status.st_mode & 0777) != 0600 ||
       socket_status.st_uid != ::geteuid()) {
-    ::close(socket_fd_);
-    socket_fd_ = -1;
+    ::close(listener_fd_);
+    listener_fd_ = -1;
     ::unlink(config_.socket_path.c_str());
     throw std::runtime_error("controller facts socket permissions are invalid");
   }
   socket_device_ = static_cast<std::uint64_t>(socket_status.st_dev);
   socket_inode_ = static_cast<std::uint64_t>(socket_status.st_ino);
+  if (::listen(listener_fd_, 1) != 0) {
+    const auto error = std::string(std::strerror(errno));
+    RemoveOwnedSocket();
+    throw std::runtime_error("failed to listen on controller facts socket: " +
+                             error);
+  }
 #endif
 }
 
@@ -699,10 +736,23 @@ std::optional<SimulatorControlFacts> SimulatorControlChannel::WaitFor(
   const auto started = SimulatorControlJoin::Clock::now();
   join_.OfferPhysical(frame, started);
   while (true) {
-    while (ReceiveOne()) {
+    if (auto match = join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
+      return match;
+    }
+    if (state_ == State::kListening) {
+      (void)AcceptOne();
+    }
+    while (state_ == State::kConnected && ReceiveOne()) {
+      if (auto match =
+              join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
+        return match;
+      }
     }
     if (auto match = join_.TakeMatch(frame.frame_id, frame.simulation_time_s)) {
       return match;
+    }
+    if (state_ == State::kUnavailable) {
+      return std::nullopt;
     }
     const auto now = SimulatorControlJoin::Clock::now();
     join_.Expire(now);
@@ -712,9 +762,14 @@ std::optional<SimulatorControlFacts> SimulatorControlChannel::WaitFor(
     const auto remaining =
         std::chrono::duration_cast<std::chrono::milliseconds>(maximum_wait -
                                                                (now - started));
-    pollfd descriptor{socket_fd_, POLLIN, 0};
-    const auto result = ::poll(&descriptor, 1, static_cast<int>(remaining.count()));
+    const int descriptor_fd = state_ == State::kListening ? listener_fd_
+                                                           : connection_fd_;
+    pollfd descriptor{descriptor_fd, POLLIN, 0};
+    const auto result = ::poll(
+        &descriptor, 1,
+        std::max(1, static_cast<int>(remaining.count())));
     if (result < 0 && errno != EINTR) {
+      MakeUnavailable();
       return std::nullopt;
     }
   }
@@ -724,70 +779,120 @@ SimulatorControlDiagnostics SimulatorControlChannel::diagnostics() const {
   return join_.diagnostics();
 }
 
-bool SimulatorControlChannel::ReceiveOne() {
-#if !defined(__linux__)
+bool SimulatorControlChannel::AcceptOne() {
+#if !defined(__APPLE__) && !defined(__linux__)
   return false;
 #else
-  std::array<char, kMaximumControlDatagramBytes> payload{};
-  std::array<char, CMSG_SPACE(sizeof(struct ucred))> ancillary{};
-  iovec vector{payload.data(), payload.size()};
-  msghdr message{};
-  message.msg_iov = &vector;
-  message.msg_iovlen = 1;
-  message.msg_control = ancillary.data();
-  message.msg_controllen = ancillary.size();
-  const auto received = ::recvmsg(socket_fd_, &message, MSG_DONTWAIT);
-  if (received < 0) {
+  if (state_ != State::kListening) {
     return false;
   }
-  join_.NoteDatagramReceived();
-  const struct ucred *credentials = nullptr;
-  for (auto *header = CMSG_FIRSTHDR(&message); header != nullptr;
-       header = CMSG_NXTHDR(&message, header)) {
-    if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_CREDENTIALS &&
-        header->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
-      credentials =
-          reinterpret_cast<const struct ucred *>(CMSG_DATA(header));
-      break;
+  const int accepted = ::accept(listener_fd_, nullptr, nullptr);
+  if (accepted < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+      return false;
     }
+    MakeUnavailable();
+    return false;
   }
-  // Credential and truncation failures are deliberately not parsed or joined.
-  if (credentials == nullptr || credentials->uid != ::geteuid() ||
-      credentials->pid <= 0 ||
-      (producer_pid_.has_value() && *producer_pid_ != credentials->pid) ||
-      (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0 ||
-      received <= 0 ||
-      static_cast<std::size_t>(received) > kMaximumControlDatagramBytes) {
-    if (credentials == nullptr || credentials->uid != ::geteuid() ||
-        credentials->pid <= 0 ||
-        (producer_pid_.has_value() && *producer_pid_ != credentials->pid)) {
-      join_.NotePeerRejection();
-    } else {
-      join_.NoteMalformedRecord();
-    }
+  ::close(listener_fd_);
+  listener_fd_ = -1;
+  if (!SetNonBlockingCloseOnExec(accepted) ||
+      !PeerHasSameEffectiveUid(accepted)) {
+    join_.NotePeerRejection();
+    ::close(accepted);
+    state_ = State::kUnavailable;
     return true;
   }
-  const auto decoded = DecodeSimulatorControlRecord(
-      std::string_view(payload.data(), static_cast<std::size_t>(received)));
-  if (decoded.record.has_value()) {
-    if (decoded.record->run_id == config_.expected_run_id &&
-        decoded.record->ego_actor_id == config_.expected_ego_actor_id &&
-        !producer_pid_.has_value()) {
-      producer_pid_ = credentials->pid;
-    }
-    join_.OfferControl(*decoded.record, SimulatorControlJoin::Clock::now());
-  } else {
-    join_.NoteMalformedRecord();
-  }
+  connection_fd_ = accepted;
+  state_ = State::kConnected;
+  join_.NoteConnectionAccepted();
   return true;
 #endif
 }
 
-void SimulatorControlChannel::RemoveOwnedSocket() noexcept {
-  if (socket_fd_ >= 0) {
-    ::close(socket_fd_);
-    socket_fd_ = -1;
+bool SimulatorControlChannel::ReceiveOne() {
+#if !defined(__APPLE__) && !defined(__linux__)
+  return false;
+#else
+  if (state_ != State::kConnected ||
+      receive_size_ >= receive_buffer_.size()) {
+    return false;
   }
+  const auto received = ::recv(connection_fd_,
+                               receive_buffer_.data() + receive_size_,
+                               receive_buffer_.size() - receive_size_,
+                               MSG_DONTWAIT);
+  if (received < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+      return false;
+    }
+    MakeUnavailable();
+    return false;
+  }
+  if (received == 0) {
+    MakeUnavailable(receive_size_ != 0);
+    return false;
+  }
+  receive_size_ += static_cast<std::size_t>(received);
+  (void)ConsumeFrames();
+  return true;
+#endif
+}
+
+bool SimulatorControlChannel::ConsumeFrames() {
+  while (receive_size_ >= kControlFrameLengthBytes) {
+    const auto *bytes = reinterpret_cast<const unsigned char *>(
+        receive_buffer_.data());
+    const auto body_size =
+        (static_cast<std::uint32_t>(bytes[0]) << 24U) |
+        (static_cast<std::uint32_t>(bytes[1]) << 16U) |
+        (static_cast<std::uint32_t>(bytes[2]) << 8U) |
+        static_cast<std::uint32_t>(bytes[3]);
+    if (body_size == 0 || body_size > kMaximumControlFrameBodyBytes) {
+      join_.NoteMalformedRecord();
+      MakeUnavailable();
+      return false;
+    }
+    const auto frame_size = kControlFrameLengthBytes + body_size;
+    if (receive_size_ < frame_size) {
+      return true;
+    }
+    join_.NoteFrameReceived();
+    const auto decoded = DecodeSimulatorControlRecord(std::string_view(
+        receive_buffer_.data() + kControlFrameLengthBytes, body_size));
+    if (decoded.record.has_value()) {
+      join_.OfferControl(*decoded.record, SimulatorControlJoin::Clock::now());
+    } else {
+      join_.NoteMalformedRecord();
+    }
+    const auto remaining = receive_size_ - frame_size;
+    if (remaining != 0) {
+      std::memmove(receive_buffer_.data(),
+                   receive_buffer_.data() + frame_size, remaining);
+    }
+    receive_size_ = remaining;
+  }
+  return true;
+}
+
+void SimulatorControlChannel::MakeUnavailable(bool malformed_partial) noexcept {
+  if (malformed_partial) {
+    join_.NoteMalformedRecord();
+  }
+  if (connection_fd_ >= 0) {
+    ::close(connection_fd_);
+    connection_fd_ = -1;
+  }
+  if (listener_fd_ >= 0) {
+    ::close(listener_fd_);
+    listener_fd_ = -1;
+  }
+  receive_size_ = 0;
+  state_ = State::kUnavailable;
+}
+
+void SimulatorControlChannel::RemoveOwnedSocket() noexcept {
+  MakeUnavailable();
   if (config_.socket_path.empty() || socket_inode_ == 0) {
     return;
   }

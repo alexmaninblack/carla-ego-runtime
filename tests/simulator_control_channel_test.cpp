@@ -13,7 +13,7 @@
 #include <variant>
 #include <vector>
 
-#if defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__)
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -149,9 +149,9 @@ void CheckDecoder() {
         "invalid UTF-8 is rejected before JSON use");
 
   Check(!DecodeSimulatorControlRecord(
-             std::string(kMaximumControlDatagramBytes + 1, ' '))
+             std::string(kMaximumControlFrameBodyBytes + 1, ' '))
              .record.has_value(),
-        "oversize datagram is rejected");
+        "oversize frame body is rejected");
 }
 
 void CheckRuntimeOptions() {
@@ -188,7 +188,7 @@ void CheckJoin() {
   const auto started = Clock::time_point{};
 
   SimulatorControlJoin control_first("run-a", 42);
-  control_first.NoteDatagramReceived();
+  control_first.NoteFrameReceived();
   control_first.OfferControl(Record(1, 0.05), started);
   control_first.OfferPhysical({"run-a", 42, 1, 0.05},
                               started + std::chrono::milliseconds(10));
@@ -199,7 +199,7 @@ void CheckJoin() {
 
   SimulatorControlJoin physical_first("run-a", 42);
   physical_first.OfferPhysical({"run-a", 42, 2, 0.10}, started);
-  physical_first.NoteDatagramReceived();
+  physical_first.NoteFrameReceived();
   physical_first.OfferControl(Record(2, 0.10),
                               started + std::chrono::milliseconds(10));
   Check(physical_first.TakeMatch(2, 0.10).has_value(),
@@ -312,33 +312,62 @@ void CheckProjectionTrace() {
         "missing handoff preserves truthful physical telemetry");
 }
 
-#if defined(__linux__)
-bool SendDatagram(const std::string &path, const std::string &payload) {
-  const int descriptor = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+#if defined(__APPLE__) || defined(__linux__)
+int ConnectStream(const std::string &path) {
+  const int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
   if (descriptor < 0) {
-    return false;
+    return -1;
   }
   sockaddr_un address{};
   address.sun_family = AF_UNIX;
   if (path.size() >= sizeof(address.sun_path)) {
     ::close(descriptor);
-    return false;
+    return -1;
   }
   std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-  const auto result = ::sendto(
-      descriptor, payload.data(), payload.size(), 0,
-      reinterpret_cast<const sockaddr *>(&address), sizeof(address));
-  ::close(descriptor);
-  return result == static_cast<ssize_t>(payload.size());
+  if (::connect(descriptor, reinterpret_cast<const sockaddr *>(&address),
+                sizeof(address)) != 0) {
+    ::close(descriptor);
+    return -1;
+  }
+  return descriptor;
 }
 
-void CheckLinuxTransport() {
+std::string Frame(std::string payload) {
+  const auto size = static_cast<std::uint32_t>(payload.size());
+  std::string framed;
+  framed.reserve(carla_ego_runtime::kControlFrameLengthBytes + payload.size());
+  framed.push_back(static_cast<char>((size >> 24U) & 0xffU));
+  framed.push_back(static_cast<char>((size >> 16U) & 0xffU));
+  framed.push_back(static_cast<char>((size >> 8U) & 0xffU));
+  framed.push_back(static_cast<char>(size & 0xffU));
+  framed += payload;
+  return framed;
+}
+
+bool SendAll(int descriptor, std::string_view bytes) {
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto sent =
+        ::send(descriptor, bytes.data() + offset, bytes.size() - offset, 0);
+    if (sent < 0 && errno == EINTR) {
+      continue;
+    }
+    if (sent <= 0) {
+      return false;
+    }
+    offset += static_cast<std::size_t>(sent);
+  }
+  return true;
+}
+
+void CheckPlatformTransport() {
   using namespace carla_ego_runtime;
   std::array<char, 64> directory_template{};
   const std::string prefix = "/tmp/carla-control-channel-XXXXXX";
   std::copy(prefix.begin(), prefix.end(), directory_template.begin());
   char *directory = ::mkdtemp(directory_template.data());
-  Check(directory != nullptr, "Linux transport test directory is created");
+  Check(directory != nullptr, "transport test directory is created");
   if (directory == nullptr) {
     return;
   }
@@ -346,63 +375,134 @@ void CheckLinuxTransport() {
   const std::string socket_path = std::string(directory) + "/facts.sock";
 
   {
-    SimulatorControlChannel channel(
-        {socket_path, "run-a", 42});
+    SimulatorControlChannel channel({socket_path, "run-a", 42});
     struct stat status {};
     Check(::lstat(socket_path.c_str(), &status) == 0 &&
               S_ISSOCK(status.st_mode) && (status.st_mode & 0777) == 0600,
-          "Linux receiver socket is owner-only");
-
-    Check(SendDatagram(socket_path, Payload(1, 0.05, 1, 0, false)),
-          "first producer sends one atomic datagram");
+          "stream listener socket is owner-only");
+    const int producer = ConnectStream(socket_path);
+    Check(producer >= 0, "one stream producer connects");
+    Check(producer >= 0 &&
+              SendAll(producer, Frame(Payload(1, 0.05, 1, 0, false))),
+          "same-UID producer sends one framed record");
     Check(channel.WaitFor({"run-a", 42, 1, 0.05},
                           std::chrono::milliseconds(50))
               .has_value(),
-          "Linux receiver accepts the pinned producer");
-
-    const auto child = ::fork();
-    if (child == 0) {
-      const bool sent =
-          SendDatagram(socket_path, Payload(2, 0.10, 2, 0, false));
-      ::_exit(sent ? 0 : 1);
+          "receiver authenticates and accepts the connected producer");
+    Check(channel.diagnostics().connections_accepted == 1,
+          "exactly one authenticated connection is accepted");
+    const int second = ConnectStream(socket_path);
+    Check(second < 0, "a second connection is impossible within one run");
+    if (second >= 0) {
+      ::close(second);
     }
-    int child_status = 0;
-    Check(child > 0 && ::waitpid(child, &child_status, 0) == child &&
-              WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0,
-          "second process sends a credential-bearing test datagram");
+    ::close(producer);
+    const auto disconnected_at = std::chrono::steady_clock::now();
     Check(!channel.WaitFor({"run-a", 42, 2, 0.10},
-                           std::chrono::milliseconds(20))
+                           std::chrono::milliseconds(50))
                .has_value(),
-          "second producer PID is rejected");
-    Check(channel.diagnostics().peer_rejections >= 1,
-          "peer rejection is counted without changing vehicle state");
-
-    Check(SendDatagram(
-              socket_path,
-              std::string(kMaximumControlDatagramBytes + 1, 'x')),
-          "oversize datagram reaches the receiver atomically");
-    Check(!channel.WaitFor({"run-a", 42, 3, 0.15},
-                           std::chrono::milliseconds(20))
-               .has_value(),
-          "oversize datagram never becomes control facts");
-    Check(channel.diagnostics().malformed_records >= 1,
-          "truncation is counted before JSON processing");
+          "EOF makes the channel unavailable without last-known reuse");
+    Check(std::chrono::steady_clock::now() - disconnected_at <
+              std::chrono::milliseconds(40),
+          "known disconnect returns before the residence timeout");
   }
   Check(!std::filesystem::exists(socket_path),
         "receiver removes only its owned socket on shutdown");
 
   {
-    SimulatorControlChannel restarted(
-        {socket_path, "run-b", 42});
+    SimulatorControlChannel partial({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    const auto framed = Frame(Payload(2, 0.10, 2, 0, false));
+    Check(producer >= 0 && SendAll(producer, std::string_view(framed).substr(0, 2)),
+          "partial frame prefix is delivered");
+    Check(!partial.WaitFor({"run-a", 42, 2, 0.10},
+                           std::chrono::milliseconds(5))
+               .has_value(),
+          "one bounded partial frame never becomes JSON");
+    Check(producer >= 0 && SendAll(producer, std::string_view(framed).substr(2)),
+          "remaining frame bytes are delivered");
+    Check(partial.WaitFor({"run-a", 42, 2, 0.10},
+                          std::chrono::milliseconds(50))
+              .has_value(),
+          "partial reads reconstruct exactly one complete frame");
+    if (producer >= 0) {
+      ::close(producer);
+    }
+  }
+
+  {
+    SimulatorControlChannel coalesced({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    const auto both = Frame("{}") + Frame(Payload(3, 0.15, 3, 0, false)) +
+                      Frame(Payload(4, 0.20, 4, 0, false));
+    Check(producer >= 0 && SendAll(producer, both),
+          "malformed and valid coalesced stream records arrive together");
+    Check(coalesced.WaitFor({"run-a", 42, 3, 0.15},
+                            std::chrono::milliseconds(50))
+              .has_value(),
+          "first coalesced frame joins");
+    Check(coalesced.WaitFor({"run-a", 42, 4, 0.20},
+                            std::chrono::milliseconds(50))
+              .has_value(),
+          "second coalesced frame joins without reuse");
+    Check(coalesced.diagnostics().malformed_records == 1,
+          "one complete malformed body is discarded without desynchronizing");
+    if (producer >= 0) {
+      ::close(producer);
+    }
+  }
+
+  for (const auto &invalid_prefix : {
+           std::string{"\0\0\0\0", 4},
+           std::string{"\0\0\x10\x01", 4},
+       }) {
+    SimulatorControlChannel invalid({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    Check(producer >= 0 && SendAll(producer, invalid_prefix),
+          "invalid frame length reaches the receiver");
+    Check(!invalid.WaitFor({"run-a", 42, 5, 0.25},
+                           std::chrono::milliseconds(20))
+               .has_value(),
+          "zero or oversize length fails closed before JSON");
+    Check(invalid.diagnostics().malformed_records == 1,
+          "invalid length increments one bounded diagnostic");
+    if (producer >= 0) {
+      ::close(producer);
+    }
+  }
+
+  {
+    SimulatorControlChannel truncated({socket_path, "run-a", 42});
+    const int producer = ConnectStream(socket_path);
+    std::string incomplete{"\0\0\0\x64{", 5};
+    Check(producer >= 0 && SendAll(producer, incomplete),
+          "truncated frame bytes reach the receiver");
+    if (producer >= 0) {
+      ::close(producer);
+    }
+    Check(!truncated.WaitFor({"run-a", 42, 6, 0.30},
+                             std::chrono::milliseconds(20))
+               .has_value(),
+          "EOF with a partial frame fails closed");
+    Check(truncated.diagnostics().malformed_records == 1,
+          "truncated frame is counted before JSON");
+  }
+
+  {
+    SimulatorControlChannel restarted({socket_path, "run-b", 42});
     auto payload = Payload(1, 0.05, 0, 0, false);
     const auto run = payload.find("run-a");
     payload.replace(run, std::string("run-a").size(), "run-b");
-    Check(SendDatagram(socket_path, payload),
-          "new run sends through a newly owned socket");
+    const int producer = ConnectStream(socket_path);
+    Check(producer >= 0 && SendAll(producer, Frame(payload)),
+          "new run sends through a newly owned stream");
     Check(restarted.WaitFor({"run-b", 42, 1, 0.05},
                             std::chrono::milliseconds(50))
               .has_value(),
           "process restart accepts only the new run boundary");
+    if (producer >= 0) {
+      ::close(producer);
+    }
   }
   ::rmdir(directory);
 }
@@ -415,8 +515,8 @@ int main() {
   CheckRuntimeOptions();
   CheckJoin();
   CheckProjectionTrace();
-#if defined(__linux__)
-  CheckLinuxTransport();
+#if defined(__APPLE__) || defined(__linux__)
+  CheckPlatformTransport();
 #endif
   if (failures == 0) {
     std::cout << "Simulator control channel tests passed\n";
