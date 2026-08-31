@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,11 @@ struct RuntimeOptions {
   std::uint16_t viss_port = 6443;
   std::string viss_certificate_chain_file;
   std::string viss_private_key_file;
+  std::string viss_client_trust_bundle_file;
+  std::string viss_assignment_socket_file;
+  std::optional<std::uint64_t> viss_initial_assignment_generation;
+  std::string viss_engineering_dashboard_certificate_sha256;
+  std::optional<std::string> viss_qualification_certificate_sha256;
   std::string control_facts_socket_file;
   std::string simulator_run_id;
   std::size_t viss_max_clients = 8;
@@ -39,6 +45,8 @@ struct RuntimeOptions {
   bool autopilot = false;
   bool chase_camera = false;
   bool viss_enabled = false;
+  bool viss_development_profile = false;
+  bool viss_strict_client_authentication = false;
 };
 
 enum class Command {

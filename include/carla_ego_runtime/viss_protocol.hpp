@@ -1,5 +1,6 @@
 #pragma once
 
+#include "carla_ego_runtime/viss_access.hpp"
 #include "carla_ego_runtime/vss.hpp"
 
 #include <chrono>
@@ -34,7 +35,8 @@ struct VissResponse {
 // subscription identifiers therefore cannot leak across reconnects.
 class VissSessionProtocol {
 public:
-  explicit VissSessionProtocol(VissProtocolLimits limits = {});
+  explicit VissSessionProtocol(VissProtocolLimits limits = {},
+                               VissSessionAccess access = {});
   ~VissSessionProtocol();
 
   VissSessionProtocol(const VissSessionProtocol &) = delete;

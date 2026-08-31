@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace carla_ego_runtime {
@@ -15,6 +16,13 @@ struct VissServerConfig {
   std::uint16_t port = 6443;
   std::string certificate_chain_file;
   std::string private_key_file;
+  bool development_profile = false;
+  bool strict_client_authentication = false;
+  std::string client_trust_bundle_file;
+  std::string assignment_socket_file;
+  std::optional<std::uint64_t> initial_assignment_generation;
+  std::string engineering_dashboard_certificate_sha256;
+  std::optional<std::string> qualification_certificate_sha256;
   std::size_t max_clients = 8;
   std::size_t max_pending_messages_per_client = 8;
   VissProtocolLimits protocol_limits;

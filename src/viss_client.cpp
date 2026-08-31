@@ -41,6 +41,8 @@ struct Options {
   std::string host = "localhost";
   std::uint16_t port = 6443;
   std::string ca_file;
+  std::string certificate_chain_file;
+  std::string private_key_file;
   std::string request;
   std::size_t messages = 1;
   std::uint32_t monitor_period_ms = 250;
@@ -58,6 +60,8 @@ Options:
       --host HOST           TLS host name (default: localhost)
       --port PORT           Secure WebSocket port (default: 6443)
       --ca FILE             Trusted PEM certificate or CA bundle (required)
+      --cert FILE           PEM client certificate chain
+      --key FILE            PEM client private key (required with --cert)
       --request JSON        One VISS request to send
       --messages N          Number of raw responses/events to read (default: 1)
       --monitor             Show the live basic-telemetry dashboard until Ctrl-C
@@ -98,6 +102,10 @@ Options Parse(const std::vector<std::string> &arguments) {
           RequireValue(arguments, index), "--port");
     } else if (argument == "--ca") {
       options.ca_file = RequireValue(arguments, index);
+    } else if (argument == "--cert") {
+      options.certificate_chain_file = RequireValue(arguments, index);
+    } else if (argument == "--key") {
+      options.private_key_file = RequireValue(arguments, index);
     } else if (argument == "--request") {
       options.request = RequireValue(arguments, index);
     } else if (argument == "--messages") {
@@ -115,6 +123,10 @@ Options Parse(const std::vector<std::string> &arguments) {
   if (options.host.empty() || options.ca_file.empty()) {
     throw std::invalid_argument(
         "--host must not be empty and --ca is required");
+  }
+  if (options.certificate_chain_file.empty() !=
+      options.private_key_file.empty()) {
+    throw std::invalid_argument("--cert and --key must be supplied together");
   }
   if (options.monitor == !options.request.empty()) {
     throw std::invalid_argument(
@@ -519,6 +531,15 @@ int Run(const Options &options) {
   ssl::context tls_context(ssl::context::tls_client);
   tls_context.set_verify_mode(ssl::verify_peer);
   tls_context.load_verify_file(options.ca_file);
+  if (!options.certificate_chain_file.empty()) {
+    tls_context.use_certificate_chain_file(options.certificate_chain_file);
+    tls_context.use_private_key_file(options.private_key_file,
+                                     ssl::context::pem);
+    if (SSL_CTX_check_private_key(tls_context.native_handle()) != 1) {
+      throw std::runtime_error(
+          "client private key does not match the certificate");
+    }
+  }
 
   tcp::resolver resolver(io_context);
   SecureWebSocket client(io_context, tls_context);

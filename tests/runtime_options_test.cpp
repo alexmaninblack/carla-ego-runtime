@@ -49,6 +49,10 @@ int main() {
         "default VISS bind address is loopback");
   Check(defaults.options.viss_port == 6443, "default VISS port");
   Check(defaults.options.viss_max_clients == 8, "default VISS client cap");
+  Check(!defaults.options.viss_strict_client_authentication,
+        "strict VISS client authentication disabled by default");
+  Check(!defaults.options.viss_development_profile,
+        "development VISS profile disabled by default");
   Check(defaults.options.tick_owner, "tick ownership enabled by default");
   Check(defaults.options.spawn_if_missing, "spawning enabled by default");
   Check(defaults.options.require_matching_versions,
@@ -62,57 +66,69 @@ int main() {
         "default chase camera update rate");
   Check(defaults.options.exposure_offset == 0.0, "default exposure offset");
 
-  const auto custom = ParseCommandLine({"--host",
-                                        "carla.local",
-                                        "--port",
-                                        "2100",
-                                        "--timeout-ms",
-                                        "5000",
-                                        "--role-name",
-                                        "ego",
-                                        "--blueprint",
-                                        "vehicle.tesla.model3",
-                                        "--spawn-point-index",
-                                        "7",
-                                        "--run-seconds",
-                                        "15",
-                                        "--max-frames",
-                                        "42",
-                                        "--fixed-delta-seconds",
-                                        "0.1",
-                                        "--gnss-sensor-tick-seconds",
-                                        "0.2",
-                                        "--gnss-max-age-seconds",
-                                        "0.6",
-                                        "--log-every-frames",
-                                        "10",
-                                        "--viss",
-                                        "--viss-bind-address",
-                                        "0.0.0.0",
-                                        "--viss-port",
-                                        "7443",
-                                        "--viss-cert",
-                                        "server.pem",
-                                        "--viss-key",
-                                        "server-key.pem",
-                                        "--viss-max-clients",
-                                        "4",
-                                        "--viss-max-subscriptions",
-                                        "6",
-                                        "--viss-max-pending-messages",
-                                        "3",
-                                        "--observe-ticks",
-                                        "--real-time",
-                                        "--autopilot",
-                                        "--chase-camera",
-                                        "--chase-camera-response",
-                                        "8.5",
-                                        "--chase-camera-update-hz",
-                                        "90",
-                                        "--exposure-offset",
-                                        "-0.35",
-                                        "--no-spawn",
-                                        "--allow-version-mismatch"});
+  const auto custom =
+      ParseCommandLine({"--host",
+                        "carla.local",
+                        "--port",
+                        "2100",
+                        "--timeout-ms",
+                        "5000",
+                        "--role-name",
+                        "ego",
+                        "--blueprint",
+                        "vehicle.tesla.model3",
+                        "--spawn-point-index",
+                        "7",
+                        "--run-seconds",
+                        "15",
+                        "--max-frames",
+                        "42",
+                        "--fixed-delta-seconds",
+                        "0.1",
+                        "--gnss-sensor-tick-seconds",
+                        "0.2",
+                        "--gnss-max-age-seconds",
+                        "0.6",
+                        "--log-every-frames",
+                        "10",
+                        "--viss",
+                        "--viss-bind-address",
+                        "0.0.0.0",
+                        "--viss-port",
+                        "7443",
+                        "--viss-cert",
+                        "server.pem",
+                        "--viss-key",
+                        "server-key.pem",
+                        "--viss-strict-client-auth",
+                        "--viss-client-ca",
+                        "client-ca.pem",
+                        "--viss-assignment-socket",
+                        "/tmp/viss-assignment.sock",
+                        "--viss-assignment-generation",
+                        "17",
+                        "--viss-dashboard-certificate-sha256",
+                        std::string(64, 'a'),
+                        "--viss-qualification-certificate-sha256",
+                        std::string(64, 'b'),
+                        "--viss-max-clients",
+                        "4",
+                        "--viss-max-subscriptions",
+                        "6",
+                        "--viss-max-pending-messages",
+                        "3",
+                        "--observe-ticks",
+                        "--real-time",
+                        "--autopilot",
+                        "--chase-camera",
+                        "--chase-camera-response",
+                        "8.5",
+                        "--chase-camera-update-hz",
+                        "90",
+                        "--exposure-offset",
+                        "-0.35",
+                        "--no-spawn",
+                        "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
   Check(custom.options.port == 2100, "custom port");
   Check(custom.options.timeout_ms == 5000, "custom timeout");
@@ -136,6 +152,21 @@ int main() {
         "custom VISS certificate");
   Check(custom.options.viss_private_key_file == "server-key.pem",
         "custom VISS private key");
+  Check(custom.options.viss_strict_client_authentication,
+        "strict VISS client authentication enabled");
+  Check(custom.options.viss_client_trust_bundle_file == "client-ca.pem",
+        "custom VISS client CA");
+  Check(custom.options.viss_assignment_socket_file ==
+            "/tmp/viss-assignment.sock",
+        "custom VISS assignment socket");
+  Check(custom.options.viss_initial_assignment_generation == 17,
+        "custom restored assignment generation");
+  Check(custom.options.viss_engineering_dashboard_certificate_sha256 ==
+            std::string(64, 'a'),
+        "custom Dashboard certificate fingerprint");
+  Check(custom.options.viss_qualification_certificate_sha256 ==
+            std::string(64, 'b'),
+        "custom qualification certificate fingerprint");
   Check(custom.options.viss_max_clients == 4, "custom VISS client cap");
   Check(custom.options.viss_max_subscriptions_per_client == 6,
         "custom VISS subscription cap");
@@ -158,6 +189,12 @@ int main() {
         "version command");
   Check(ParseCommandLine({"--run-seconds", "2"}).options.max_frames == 0,
         "wall-clock run overrides implicit one-frame limit");
+  const auto development =
+      ParseCommandLine({"--viss", "--viss-development", "--viss-cert",
+                        "server.pem", "--viss-key", "server-key.pem"});
+  Check(development.options.viss_development_profile &&
+            !development.options.viss_strict_client_authentication,
+        "server-auth-only VISS requires an explicit development profile");
 
   CheckThrows([] { ParseCommandLine({"--port", "0"}); }, "zero port rejected");
   CheckThrows([] { ParseCommandLine({"--port", "65536"}); },
@@ -184,6 +221,38 @@ int main() {
               "zero VISS port rejected");
   CheckThrows([] { ParseCommandLine({"--viss-max-clients", "0"}); },
               "zero VISS client cap rejected");
+  CheckThrows([] { ParseCommandLine({"--viss-development"}); },
+              "development profile without VISS rejected");
+  CheckThrows(
+      [] {
+        ParseCommandLine({"--viss", "--viss-cert", "server.pem", "--viss-key",
+                          "server-key.pem", "--viss-development",
+                          "--viss-bind-address", "0.0.0.0"});
+      },
+      "development VISS non-loopback bind rejected");
+  CheckThrows(
+      [] {
+        ParseCommandLine({"--viss", "--viss-cert", "server.pem", "--viss-key",
+                          "server-key.pem", "--viss-client-ca", "ca.pem"});
+      },
+      "strict material without explicit strict profile rejected");
+  CheckThrows(
+      [] {
+        ParseCommandLine({"--viss", "--viss-cert", "server.pem", "--viss-key",
+                          "server-key.pem", "--viss-strict-client-auth"});
+      },
+      "incomplete strict VISS configuration rejected");
+  CheckThrows(
+      [] {
+        ParseCommandLine({"--viss", "--viss-cert", "server.pem", "--viss-key",
+                          "server-key.pem", "--viss-strict-client-auth",
+                          "--viss-client-ca", "ca.pem",
+                          "--viss-assignment-socket", "/tmp/a.sock",
+                          "--viss-assignment-generation", "0",
+                          "--viss-dashboard-certificate-sha256",
+                          std::string(64, 'A'), "--viss-max-clients", "4"});
+      },
+      "non-canonical strict certificate fingerprint rejected");
   CheckThrows([] { ParseCommandLine({"--chase-camera-response", "0"}); },
               "zero chase camera response rejected");
   CheckThrows([] { ParseCommandLine({"--chase-camera-update-hz", "10"}); },

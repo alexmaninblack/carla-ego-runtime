@@ -1,5 +1,7 @@
 #include "carla_ego_runtime/runtime_options.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -44,6 +46,14 @@ void RequireNonEmpty(const std::string &value, std::string_view option) {
   if (value.empty()) {
     throw std::invalid_argument(std::string(option) + " must not be empty");
   }
+}
+
+bool IsCanonicalSha256(std::string_view value) {
+  return value.size() == 64 &&
+         std::all_of(value.begin(), value.end(), [](unsigned char character) {
+           return std::isdigit(character) != 0 ||
+                  (character >= 'a' && character <= 'f');
+         });
 }
 
 double ParsePositiveDouble(const std::string &text, std::string_view option) {
@@ -177,6 +187,40 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
     } else if (argument == "--viss-key") {
       result.options.viss_private_key_file = RequireValue(arguments, index);
       RequireNonEmpty(result.options.viss_private_key_file, "--viss-key");
+    } else if (argument == "--viss-development") {
+      result.options.viss_development_profile = true;
+    } else if (argument == "--viss-strict-client-auth") {
+      result.options.viss_strict_client_authentication = true;
+    } else if (argument == "--viss-client-ca") {
+      result.options.viss_client_trust_bundle_file =
+          RequireValue(arguments, index);
+      RequireNonEmpty(result.options.viss_client_trust_bundle_file,
+                      "--viss-client-ca");
+    } else if (argument == "--viss-assignment-socket") {
+      result.options.viss_assignment_socket_file =
+          RequireValue(arguments, index);
+      RequireNonEmpty(result.options.viss_assignment_socket_file,
+                      "--viss-assignment-socket");
+    } else if (argument == "--viss-assignment-generation") {
+      result.options.viss_initial_assignment_generation =
+          ParseUnsigned<std::uint64_t>(RequireValue(arguments, index),
+                                       "--viss-assignment-generation");
+    } else if (argument == "--viss-dashboard-certificate-sha256") {
+      result.options.viss_engineering_dashboard_certificate_sha256 =
+          RequireValue(arguments, index);
+      if (!IsCanonicalSha256(
+              result.options.viss_engineering_dashboard_certificate_sha256)) {
+        throw std::invalid_argument("--viss-dashboard-certificate-sha256 must "
+                                    "be 64 lowercase hexadecimal characters");
+      }
+    } else if (argument == "--viss-qualification-certificate-sha256") {
+      auto value = RequireValue(arguments, index);
+      if (!IsCanonicalSha256(value)) {
+        throw std::invalid_argument(
+            "--viss-qualification-certificate-sha256 must be 64 lowercase "
+            "hexadecimal characters");
+      }
+      result.options.viss_qualification_certificate_sha256 = value;
     } else if (argument == "--viss-max-clients") {
       result.options.viss_max_clients = ParseUnsigned<std::size_t>(
           RequireValue(arguments, index), "--viss-max-clients");
@@ -261,6 +305,52 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
     throw std::invalid_argument(
         "--viss requires both --viss-cert and --viss-key");
   }
+  const bool has_strict_material =
+      !result.options.viss_client_trust_bundle_file.empty() ||
+      !result.options.viss_assignment_socket_file.empty() ||
+      result.options.viss_initial_assignment_generation.has_value() ||
+      !result.options.viss_engineering_dashboard_certificate_sha256.empty() ||
+      result.options.viss_qualification_certificate_sha256.has_value();
+  if (!result.options.viss_strict_client_authentication &&
+      has_strict_material) {
+    throw std::invalid_argument(
+        "strict VISS material requires --viss-strict-client-auth");
+  }
+  if (result.options.viss_development_profile &&
+      result.options.viss_strict_client_authentication) {
+    throw std::invalid_argument("choose exactly one of --viss-development and "
+                                "--viss-strict-client-auth");
+  }
+  if (result.options.viss_development_profile && !result.options.viss_enabled) {
+    throw std::invalid_argument("--viss-development requires --viss");
+  }
+  if (result.options.viss_enabled && !result.options.viss_development_profile &&
+      !result.options.viss_strict_client_authentication) {
+    throw std::invalid_argument(
+        "--viss requires an explicit --viss-development or "
+        "--viss-strict-client-auth profile");
+  }
+  if (result.options.viss_strict_client_authentication) {
+    if (!result.options.viss_enabled) {
+      throw std::invalid_argument("--viss-strict-client-auth requires --viss");
+    }
+    if (result.options.viss_client_trust_bundle_file.empty() ||
+        result.options.viss_assignment_socket_file.empty() ||
+        !result.options.viss_initial_assignment_generation.has_value() ||
+        result.options.viss_engineering_dashboard_certificate_sha256.empty()) {
+      throw std::invalid_argument(
+          "strict VISS requires --viss-client-ca, --viss-assignment-socket, "
+          "--viss-assignment-generation and "
+          "--viss-dashboard-certificate-sha256");
+    }
+    result.options.viss_max_clients =
+        std::min<std::size_t>(result.options.viss_max_clients, 4);
+  } else if (result.options.viss_development_profile &&
+             result.options.viss_bind_address != "127.0.0.1" &&
+             result.options.viss_bind_address != "::1") {
+    throw std::invalid_argument(
+        "development VISS may bind only to 127.0.0.1 or ::1");
+  }
   if (result.options.control_facts_socket_file.empty() !=
       result.options.simulator_run_id.empty()) {
     throw std::invalid_argument(
@@ -316,6 +406,17 @@ Options:
       --viss-port PORT          VISS Secure WebSocket port (default: 6443)
       --viss-cert FILE          PEM TLS certificate chain (required by --viss)
       --viss-key FILE           PEM TLS private key (required by --viss)
+      --viss-development        Explicit server-auth-only loopback profile
+      --viss-strict-client-auth Require CA-verified role client certificates
+      --viss-client-ca FILE     PEM client CA bundle (strict mode)
+      --viss-assignment-socket FILE
+                                Private selected-assignment control socket
+      --viss-assignment-generation N
+                                Restored current-run assignment generation
+      --viss-dashboard-certificate-sha256 HEX
+                                Enrolled Dashboard leaf DER fingerprint
+      --viss-qualification-certificate-sha256 HEX
+                                Optional qualification leaf DER fingerprint
       --viss-max-clients N      Concurrent client cap (default: 8)
       --viss-max-subscriptions N
                                 Subscription cap per client (default: 16)

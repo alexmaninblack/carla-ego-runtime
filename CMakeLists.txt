@@ -83,6 +83,8 @@ if(CARLA_EGO_WITH_VISS)
   add_library(
     carla-ego-runtime-viss STATIC
     src/boost_json.cpp
+    src/viss_access.cpp
+    src/viss_assignment_control.cpp
     src/viss_protocol.cpp
     src/viss_server.cpp
   )
@@ -104,7 +106,6 @@ if(CARLA_EGO_WITH_VISS)
     carla-ego-runtime-viss
     PUBLIC
       carla-ego-runtime-core
-    PRIVATE
       OpenSSL::SSL
       OpenSSL::Crypto
       Threads::Threads
@@ -194,6 +195,28 @@ if(BUILD_TESTING)
     )
     carla_ego_enable_warnings(viss-protocol-test)
     add_test(NAME viss_protocol COMMAND viss-protocol-test)
+
+    add_executable(viss-access-test tests/viss_access_test.cpp)
+    target_link_libraries(viss-access-test PRIVATE carla-ego-runtime-viss)
+    target_include_directories(
+      viss-access-test PRIVATE "${CARLA_EGO_BOOST_INCLUDE_DIR}"
+    )
+    carla_ego_enable_warnings(viss-access-test)
+    add_test(NAME viss_access COMMAND viss-access-test)
+
+    add_executable(
+      viss-assignment-control-test tests/viss_assignment_control_test.cpp
+    )
+    target_link_libraries(
+      viss-assignment-control-test PRIVATE carla-ego-runtime-viss
+    )
+    target_include_directories(
+      viss-assignment-control-test PRIVATE "${CARLA_EGO_BOOST_INCLUDE_DIR}"
+    )
+    carla_ego_enable_warnings(viss-assignment-control-test)
+    add_test(
+      NAME viss_assignment_control COMMAND viss-assignment-control-test
+    )
 
     add_executable(viss-network-test tests/viss_network_test.cpp)
     target_link_libraries(

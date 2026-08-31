@@ -1,5 +1,8 @@
 #include "carla_ego_runtime/viss_server.hpp"
 
+#include "carla_ego_runtime/viss_access.hpp"
+#include "carla_ego_runtime/viss_assignment_control.hpp"
+
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
@@ -7,8 +10,11 @@
 #include <boost/beast/websocket.hpp>
 
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -33,6 +39,12 @@ namespace http = beast::http;
 namespace ssl = asio::ssl;
 namespace websocket = beast::websocket;
 using tcp = asio::ip::tcp;
+
+constexpr std::size_t kStrictMaximumRoleConnections = 4;
+
+std::size_t RoleIndex(VissClientRole role) {
+  return static_cast<std::size_t>(role);
+}
 
 bool OffersVissV3(std::string_view offered) {
   while (!offered.empty()) {
@@ -69,6 +81,39 @@ public:
       throw std::invalid_argument(
           "VISS server limits must be greater than zero");
     }
+    if (config_.development_profile == config_.strict_client_authentication) {
+      throw std::invalid_argument(
+          "exactly one VISS development or strict profile is required");
+    }
+    if (config_.development_profile) {
+      if (config_.bind_address != "127.0.0.1" &&
+          config_.bind_address != "::1") {
+        throw std::invalid_argument(
+            "development VISS profile may bind only to loopback");
+      }
+      return;
+    }
+    if (config_.client_trust_bundle_file.empty() ||
+        config_.assignment_socket_file.empty() ||
+        !config_.initial_assignment_generation.has_value() ||
+        config_.engineering_dashboard_certificate_sha256.empty()) {
+      throw std::invalid_argument(
+          "strict VISS client trust and assignment state are required");
+    }
+    config_.max_clients =
+        std::min(config_.max_clients, kStrictMaximumRoleConnections);
+    assignment_state_ = std::make_unique<VissAssignmentState>(
+        *config_.initial_assignment_generation,
+        config_.engineering_dashboard_certificate_sha256,
+        config_.qualification_certificate_sha256);
+    assignment_control_ = std::make_unique<VissAssignmentControl>(
+        io_context_,
+        VissAssignmentControlConfig{config_.assignment_socket_file},
+        *assignment_state_, [this] { return LatestFrame(); },
+        [this] { return ActiveRoleCounts(); },
+        [this](VissAssignmentMutation mutation) {
+          OnAssignmentMutation(mutation);
+        });
   }
 
   ~Impl() { Stop(); }
@@ -95,6 +140,16 @@ public:
         throw std::runtime_error(
             "VISS TLS private key does not match the certificate");
       }
+      if (config_.strict_client_authentication) {
+        tls_context_.load_verify_file(config_.client_trust_bundle_file);
+        tls_context_.set_verify_mode(ssl::verify_peer |
+                                     ssl::verify_fail_if_no_peer_cert);
+        if (SSL_CTX_set_purpose(tls_context_.native_handle(),
+                                X509_PURPOSE_SSL_CLIENT) != 1) {
+          throw std::runtime_error(
+              "failed to require the TLS client-certificate purpose");
+        }
+      }
 
       boost::system::error_code error;
       const auto address = asio::ip::make_address(config_.bind_address, error);
@@ -113,6 +168,10 @@ public:
       ThrowOnError(error, "listen for VISS clients");
       bound_port_.store(acceptor_.local_endpoint().port());
 
+      if (assignment_control_) {
+        assignment_control_->Start();
+      }
+
       work_guard_.emplace(asio::make_work_guard(io_context_));
       AcceptNext();
       network_thread_ = std::thread([this] { io_context_.run(); });
@@ -120,6 +179,9 @@ public:
       running_.store(false);
       boost::system::error_code ignored;
       acceptor_.close(ignored);
+      if (assignment_control_) {
+        assignment_control_->Stop();
+      }
       work_guard_.reset();
       throw;
     }
@@ -133,6 +195,9 @@ public:
       boost::system::error_code ignored;
       acceptor_.cancel(ignored);
       acceptor_.close(ignored);
+      if (assignment_control_) {
+        assignment_control_->Stop();
+      }
       const auto sessions = sessions_;
       for (const auto &session : sessions) {
         session->Stop();
@@ -222,6 +287,10 @@ private:
       }
     }
 
+    bool selected_bound() const {
+      return access_.has_value() && IsSelectedBoundRole(access_->role);
+    }
+
   private:
     struct OutboundMessage {
       std::string payload;
@@ -236,6 +305,15 @@ private:
         Finish();
         return;
       }
+      const auto access =
+          owner_.AuthorizePeer(websocket_.next_layer().native_handle());
+      if (!access.has_value()) {
+        ++owner_.rejected_connections_;
+        Finish();
+        return;
+      }
+      access_ = *access;
+      protocol_ = VissSessionProtocol(config_.protocol_limits, *access_);
       http::async_read(websocket_.next_layer(), input_buffer_, upgrade_request_,
                        [self = shared_from_this()](
                            boost::system::error_code read_error, std::size_t) {
@@ -402,6 +480,9 @@ private:
       if (accepted_) {
         --owner_.active_connections_;
       }
+      if (access_.has_value()) {
+        owner_.ReleaseRole(access_->role);
+      }
       owner_.Remove(shared_from_this());
     }
 
@@ -413,6 +494,7 @@ private:
     const LatestVssSignalStore &signal_store_;
     VissServerConfig config_;
     VissSessionProtocol protocol_;
+    std::optional<VissSessionAccess> access_;
     Impl &owner_;
     std::deque<OutboundMessage> outbound_;
     bool accepted_ = false;
@@ -423,6 +505,74 @@ private:
                            std::string_view operation) {
     if (error) {
       throw std::runtime_error(std::string(operation) + ": " + error.message());
+    }
+  }
+
+  std::optional<VissSessionAccess> AuthorizePeer(SSL *ssl_handle) {
+    if (!config_.strict_client_authentication) {
+      return VissSessionAccess{};
+    }
+    std::unique_ptr<X509, decltype(&X509_free)> certificate(
+        SSL_get1_peer_certificate(ssl_handle), X509_free);
+    if (!certificate || SSL_get_verify_result(ssl_handle) != X509_V_OK) {
+      return std::nullopt;
+    }
+    const auto identity = InspectVissClientCertificate(certificate.get());
+    if (!identity.has_value() || !assignment_state_) {
+      return std::nullopt;
+    }
+    const auto access = assignment_state_->Authorize(*identity);
+    if (!access.has_value()) {
+      return std::nullopt;
+    }
+    const auto index = RoleIndex(access->role);
+    if (index >= active_roles_.size() || active_roles_[index] != 0 ||
+        ActiveStrictRoles() >= kStrictMaximumRoleConnections) {
+      return std::nullopt;
+    }
+    ++active_roles_[index];
+    return access;
+  }
+
+  void ReleaseRole(VissClientRole role) {
+    if (!config_.strict_client_authentication) {
+      return;
+    }
+    const auto index = RoleIndex(role);
+    if (index < active_roles_.size() && active_roles_[index] != 0) {
+      --active_roles_[index];
+    }
+  }
+
+  std::uint64_t ActiveStrictRoles() const {
+    std::uint64_t result = 0;
+    for (const auto count : active_roles_) {
+      result += count;
+    }
+    return result;
+  }
+
+  VissActiveRoleCounts ActiveRoleCounts() const {
+    return {active_roles_[RoleIndex(VissClientRole::SelectedPlatformUnit)],
+            active_roles_[RoleIndex(VissClientRole::PlatformUpdateRuntime)],
+            active_roles_[RoleIndex(VissClientRole::EngineeringDashboard)],
+            active_roles_[RoleIndex(VissClientRole::QualificationClient)]};
+  }
+
+  std::uint64_t LatestFrame() const {
+    const auto snapshot = signal_store_.Latest();
+    return snapshot.has_value() ? snapshot->frame_id : 0;
+  }
+
+  void OnAssignmentMutation(VissAssignmentMutation mutation) {
+    if (mutation == VissAssignmentMutation::None) {
+      return;
+    }
+    const auto sessions = sessions_;
+    for (const auto &session : sessions) {
+      if (session->selected_bound()) {
+        session->Stop();
+      }
     }
   }
 
@@ -461,6 +611,9 @@ private:
   std::optional<WorkGuard> work_guard_;
   std::thread network_thread_;
   std::set<std::shared_ptr<Session>> sessions_;
+  std::unique_ptr<VissAssignmentState> assignment_state_;
+  std::unique_ptr<VissAssignmentControl> assignment_control_;
+  std::array<std::uint64_t, 5> active_roles_{};
   std::atomic<bool> running_{false};
   std::atomic<std::uint16_t> bound_port_{0};
   std::atomic<std::uint64_t> accepted_connections_{0};

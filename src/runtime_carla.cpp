@@ -639,6 +639,17 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     config.port = options.viss_port;
     config.certificate_chain_file = options.viss_certificate_chain_file;
     config.private_key_file = options.viss_private_key_file;
+    config.development_profile = options.viss_development_profile;
+    config.strict_client_authentication =
+        options.viss_strict_client_authentication;
+    config.client_trust_bundle_file = options.viss_client_trust_bundle_file;
+    config.assignment_socket_file = options.viss_assignment_socket_file;
+    config.initial_assignment_generation =
+        options.viss_initial_assignment_generation;
+    config.engineering_dashboard_certificate_sha256 =
+        options.viss_engineering_dashboard_certificate_sha256;
+    config.qualification_certificate_sha256 =
+        options.viss_qualification_certificate_sha256;
     config.max_clients = options.viss_max_clients;
     config.max_pending_messages_per_client =
         options.viss_max_pending_messages_per_client;

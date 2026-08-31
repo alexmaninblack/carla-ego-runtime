@@ -155,10 +155,16 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
 
 std::vector<const VssDataPoint *>
 SelectPoints(const VssSnapshot &snapshot, std::string_view base_path,
-             const std::optional<std::vector<std::string>> &relative_patterns) {
+             const std::optional<std::vector<std::string>> &relative_patterns,
+             VissSessionAccess access) {
   std::vector<const VssDataPoint *> selected;
+  if (IsSelectedBoundRole(access.role) &&
+      snapshot.frame_id <= access.minimum_frame_exclusive) {
+    return selected;
+  }
   for (const auto &point : snapshot.data_points) {
-    if (!IsPathWithin(point.path, base_path)) {
+    if (!IsPathWithin(point.path, base_path) ||
+        !VissRoleMayRead(access.role, point.path)) {
       continue;
     }
     if (!relative_patterns.has_value()) {
@@ -296,7 +302,8 @@ json::object SuccessBase(std::string_view action, std::string_view request_id,
 
 class VissSessionProtocol::Impl {
 public:
-  explicit Impl(VissProtocolLimits limits) : limits_(limits) {
+  Impl(VissProtocolLimits limits, VissSessionAccess access)
+      : limits_(limits), access_(access) {
     if (limits_.max_subscriptions == 0 || limits_.minimum_period.count() <= 0 ||
         limits_.maximum_period < limits_.minimum_period) {
       throw std::invalid_argument("invalid VISS protocol limits");
@@ -383,7 +390,7 @@ public:
         continue;
       }
       const auto selected =
-          SelectPoints(*snapshot, iterator->path, iterator->paths);
+          SelectPoints(*snapshot, iterator->path, iterator->paths, access_);
       if (selected.empty()) {
         events.push_back(
             SubscriptionError(*iterator, response_time, "Data is unavailable"));
@@ -450,11 +457,14 @@ private:
                            kUnavailableReason, "Data is unavailable",
                            response_time);
     }
-    const auto selected = SelectPoints(*snapshot, *path, filters.paths);
+    const auto selected =
+        SelectPoints(*snapshot, *path, filters.paths, access_);
     if (selected.empty()) {
-      return ProtocolError("get", request_id, kUnavailableNumber,
-                           kUnavailableReason, "Data is unknown",
-                           response_time);
+      return ProtocolError(
+          "get", request_id, kUnavailableNumber, kUnavailableReason,
+          access_.role == VissClientRole::Development ? "Data is unknown"
+                                                      : "Data is unavailable",
+          response_time);
     }
 
     auto response = SuccessBase("get", request_id, response_time);
@@ -508,10 +518,12 @@ private:
     }
     const auto snapshot = signal_store.Latest();
     if (!snapshot.has_value() ||
-        SelectPoints(*snapshot, *path, filters.paths).empty()) {
-      return ProtocolError("subscribe", request_id, kUnavailableNumber,
-                           kUnavailableReason, "Data is unknown",
-                           response_time);
+        SelectPoints(*snapshot, *path, filters.paths, access_).empty()) {
+      return ProtocolError(
+          "subscribe", request_id, kUnavailableNumber, kUnavailableReason,
+          access_.role == VissClientRole::Development ? "Data is unknown"
+                                                      : "Data is unavailable",
+          response_time);
     }
 
     const auto subscription_id = std::to_string(next_subscription_id_++);
@@ -566,13 +578,15 @@ private:
   }
 
   VissProtocolLimits limits_;
+  VissSessionAccess access_;
   VissProtocolMetrics metrics_;
   std::uint64_t next_subscription_id_ = 1;
   std::vector<Subscription> subscriptions_;
 };
 
-VissSessionProtocol::VissSessionProtocol(VissProtocolLimits limits)
-    : impl_(std::make_unique<Impl>(limits)) {}
+VissSessionProtocol::VissSessionProtocol(VissProtocolLimits limits,
+                                         VissSessionAccess access)
+    : impl_(std::make_unique<Impl>(limits, access)) {}
 
 VissSessionProtocol::~VissSessionProtocol() = default;
 VissSessionProtocol::VissSessionProtocol(VissSessionProtocol &&) noexcept =

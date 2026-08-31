@@ -1,8 +1,8 @@
 # VISS/VSS telemetry contract v0.3
 
-Status: **implemented for the vehicle-state, GNSS, VISS network,
-frame-coherent Safe Stop projection and live controller-to-Gateway handoff
-subsets**.
+Status: **implemented for the vehicle-state, GNSS, VISS network, offline
+strict-role mTLS/assignment boundary, frame-coherent Safe Stop projection and
+live controller-to-Gateway handoff subsets**.
 
 ## Standards baseline
 
@@ -125,8 +125,17 @@ physical and four unmatched controller records for at most 250 ms and keeps
 saturating diagnostic counters only. It does not use
 `controller-status.json`, reuse last-known data, retain history or implement
 reconnect.
-The purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS role and live qualification
-remain separate work.
+The Gateway now implements the purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS
+role and its exact ten-path read allowlist:
+`Vehicle.Speed`, accelerator and brake pedal position,
+`Vehicle.CarlaSimulation.FrameId`, the three Control active/transition/
+generation facts, and the three Reset generation/in-progress/discontinuity
+facts. The selected VDP transport, Engineering Dashboard, and qualification
+clients have separate compiled read-only policies. Assignment generation and
+the post-selection exclusive frame floor prevent a newly selected Unit from
+receiving the previously retained snapshot. This is an offline-validated
+Gateway boundary only; onboarding delivery of per-Unit credentials and live
+VM/Unit qualification remain separate work.
 
 ## Time and synchronization
 

@@ -81,7 +81,9 @@ void CheckError(const carla_ego_runtime::VissResponse &response,
 } // namespace
 
 int main() {
+  using carla_ego_runtime::VissClientRole;
   using carla_ego_runtime::VissProtocolLimits;
+  using carla_ego_runtime::VissSessionAccess;
   using carla_ego_runtime::VissSessionProtocol;
 
   carla_ego_runtime::LatestVssSignalStore store;
@@ -90,6 +92,58 @@ int main() {
       std::chrono::system_clock::time_point{1723466096789ms};
   const auto steady_time = std::chrono::steady_clock::time_point{1000ms};
   VissSessionProtocol protocol;
+
+  VissSessionProtocol runtime_at_floor(
+      {}, {VissClientRole::PlatformUpdateRuntime, 8, 42});
+  CheckError(
+      runtime_at_floor.HandleRequest(
+          R"({"action":"get","path":"Vehicle.Speed","requestId":"floor"})",
+          store, system_time, steady_time),
+      "404", "unavailable_data",
+      "selected-bound role cannot read assignment-floor frame");
+
+  VissSessionProtocol runtime(
+      {}, VissSessionAccess{VissClientRole::PlatformUpdateRuntime, 8, 41});
+  auto role_response = runtime.HandleRequest(
+      R"({"action":"get","path":"Vehicle","requestId":"runtime-branch"})",
+      store, system_time, steady_time);
+  Check(!role_response.is_error, "Runtime receives its allowed branch subset");
+  auto role_object = ParseObject(role_response.payload);
+  Check(role_object.at("data").as_array().size() == 4,
+        "Runtime branch contains only implemented members of exact ten paths");
+  CheckError(
+      runtime.HandleRequest(
+          R"({"action":"get","path":"Vehicle.CurrentLocation","requestId":"runtime-denied"})",
+          store, system_time, steady_time),
+      "404", "unavailable_data", "Runtime denied path is indistinguishable");
+
+  VissSessionProtocol selected(
+      {}, VissSessionAccess{VissClientRole::SelectedPlatformUnit, 8, 41});
+  Check(
+      !selected
+           .HandleRequest(
+               R"({"action":"get","path":"Vehicle.CurrentLocation.Latitude","requestId":"selected-physical"})",
+               store, system_time, steady_time)
+           .is_error,
+      "selected VDP receives accepted physical path");
+  CheckError(
+      selected.HandleRequest(
+          R"({"action":"get","path":"Vehicle.CarlaSimulation.Reset","requestId":"selected-denied"})",
+          store, system_time, steady_time),
+      "404", "unavailable_data",
+      "selected VDP cannot select Runtime or dashboard reset branch");
+
+  for (const auto role : {VissClientRole::SelectedPlatformUnit,
+                          VissClientRole::PlatformUpdateRuntime,
+                          VissClientRole::EngineeringDashboard,
+                          VissClientRole::QualificationClient}) {
+    VissSessionProtocol read_only({}, VissSessionAccess{role, 8, 41});
+    CheckError(
+        read_only.HandleRequest(
+            R"({"action":"set","path":"Vehicle.Speed","value":"0","requestId":"strict-set"})",
+            store, system_time, steady_time),
+        "400", "invalid_data", "every strict role remains read-only");
+  }
 
   auto response = protocol.HandleRequest(
       R"({"action":"get","path":"Vehicle.Speed","requestId":"get-1"})", store,

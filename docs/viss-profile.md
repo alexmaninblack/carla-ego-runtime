@@ -21,8 +21,9 @@ change and compatibility notes.
 | --- | --- |
 | Transport | Secure WebSocket (`wss`) |
 | WebSocket subprotocol | `VISSv3` |
-| Default development port | `6443`, configurable |
+| Default development port | `6443`, configurable; loopback only |
 | Transport security | TLS 1.2 or newer |
+| Strict client identity | CA-verified X.509 leaf with one role URI SAN |
 | Primary payload | VISS JSON |
 | Client operations | `get`, `subscribe`, `unsubscribe` |
 | Update operation | Request syntax and standard errors supported; all initial signal nodes are read-only |
@@ -33,7 +34,8 @@ change and compatibility notes.
 Secure WebSocket is selected because it supports both point reads and
 server-pushed subscriptions over one connection. HTTP, MQTT, gRPC, Unix-domain
 sockets, Protocol Buffers, and VISS data compression are outside the first
-interoperability profile, not prohibited forever.
+VISS client-data transport profile, not prohibited forever. The private
+assignment-control socket described below is a separate local control plane.
 
 ## Operations
 
@@ -82,13 +84,48 @@ rules are normative for this project and are listed in the
 - The endpoint must not offer unencrypted `ws` outside an explicitly isolated
   local test harness.
 - Development certificates, keys, and access tokens must never be committed.
-- Binding to loopback is the default until authentication and authorization
-  have been selected and tested.
-- The M4 profile implements no authorization scheme. A request containing an
-  `authorization` field receives an unsupported-feature error; TLS protects the
-  transport but does not authenticate a client.
-- Exposing the service to another machine requires an explicit bind address,
-  trusted TLS material, and a documented threat review.
+- The explicit development profile performs server authentication only and is
+  restricted to `127.0.0.1` or `::1`. It is not strict-mode evidence.
+- Strict mode requires a client CA bundle, restored assignment generation,
+  private assignment-socket path, Dashboard leaf fingerprint, and an optional
+  qualification leaf fingerprint. It never falls back to development mode.
+- A strict client leaf must be currently valid, chain to the configured client
+  CA, contain `digitalSignature` key usage and `clientAuth` EKU, and contain
+  exactly one recognized URI SAN. Its enrollment fingerprint is lowercase
+  SHA-256 over the DER leaf bytes.
+- Selected roles use
+  `urn:aosedge:demo:viss-client:v1:<role>:<unit-uuid>:<node-uuid>`, where the
+  role is `selected-platform-unit` or `platform-update-runtime`. Independent
+  roles use the exact `engineering-dashboard` or `qualification-client` URI.
+  CN, OU, source IP, DNS name, and request payload are not identity authority.
+- The bundled client accepts explicit `--cert` and `--key` inputs. It consumes
+  credentials supplied by its caller and does not create or retain them.
+
+### Assignment and role policy
+
+Strict mode starts detached at the generation restored by the caller. One
+owner-only `AF_UNIX/SOCK_STREAM` control socket accepts same-effective-UID
+`select`, `detach`, and `status` requests. The socket parent is mode `0700`, the
+socket is mode `0600`, and each connection carries one newline-terminated JSON
+request of at most 4096 bytes. Selection uses an exact generation compare-and-
+swap, canonical Unit/Main Node UUIDs, and distinct fingerprints for both
+selected roles. Replacement requires an explicit detach.
+
+Strict mode admits at most one live session for each of four roles and at most
+four sessions globally. The selected Platform Unit follows the compiled
+D4-006 selected-transport read policy. Platform Update Runtime can read only
+the ten frozen Safe Stop paths. Dashboard and qualification clients use the
+independent read-only policy. Every Set is denied, and an unauthorized read or
+subscription returns ordinary unavailable data without disclosing another
+role's path set.
+
+On selection, the latest complete frame becomes an exclusive lower bound for
+both selected roles. They receive no cached data until a newer complete frame
+is published. Detach or another assignment-generation change closes both
+selected sessions and clears their subscription state; independent Dashboard
+delivery remains live. Certificate time validity is checked at handshake.
+There is no first-demo CRL/OCSP fetch, rotation daemon, or mid-session expiry
+timer.
 
 ## Implementation and conformance
 
@@ -100,9 +137,17 @@ source or schema is copied into this repository.
 
 Protocol tests cover path reads, string values, multi-path selection,
 timestamps, subscription lifecycle, reconnect isolation, read-only Update
-errors, malformed requests, and limits. A separate client/server test creates
-ephemeral TLS material at runtime and verifies TLS, the `VISSv3` handshake,
-push events, GNSS reads, and metrics across the actual network boundary.
+errors, malformed requests, role filtering, generation frame floors, and
+limits. A separate client/server test creates an ephemeral CA and all leaf
+credentials at runtime. It verifies real loopback mTLS rejection and role
+admission, the `VISSv3` handshake, the four-role cap, detach/reselect session
+closure, independent Dashboard continuity, and pre-assignment frame isolation.
+The temporary credentials are destroyed when the test ends.
+
+The assignment transport has native same-UID and owner/mode/owned-inode
+coverage on macOS. A wrong-UID native macOS execution is not claimed because
+the fixture would require a privileged second user. The Linux implementation
+uses `SO_PEERCRED`; Darwin uses `getpeereid`.
 
 ## Flow control and metrics
 
