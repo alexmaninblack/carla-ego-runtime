@@ -562,7 +562,8 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
       throw std::invalid_argument(
           "--autopilot requires this runtime to own simulation ticks");
     }
-    traffic_manager.emplace(client.GetInstanceTM());
+    traffic_manager.emplace(
+        client.GetInstanceTM(options.traffic_manager_port));
     traffic_manager_guard.emplace(*traffic_manager, vehicle);
     std::cout << "Traffic Manager autopilot: enabled (synchronous)\n";
   }

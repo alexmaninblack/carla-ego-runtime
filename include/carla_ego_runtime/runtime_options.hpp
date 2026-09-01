@@ -11,6 +11,7 @@ namespace carla_ego_runtime {
 struct RuntimeOptions {
   std::string host = "127.0.0.1";
   std::uint16_t port = 2000;
+  std::uint16_t traffic_manager_port = 8000;
   std::uint32_t timeout_ms = 10000;
   std::string role_name = "hero";
   std::string blueprint_id = "vehicle.lincoln.mkz";

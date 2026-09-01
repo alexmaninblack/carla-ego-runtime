@@ -184,6 +184,7 @@ no owned vehicle, GNSS actor, or VISS listener remained afterward.
 | --- | --- | --- |
 | `--host` | `127.0.0.1` | CARLA RPC host |
 | `--port` | `2000` | CARLA RPC port |
+| `--traffic-manager-port` | `8000` | Traffic Manager RPC port used by `--autopilot` |
 | `--timeout-ms` | `10000` | Per-operation network timeout |
 | `--role-name` | `hero` | Ego vehicle role to select or assign |
 | `--blueprint` | `vehicle.lincoln.mkz` | Vehicle spawned when the role is absent |
@@ -226,6 +227,8 @@ the blueprint is absent or every spawn point is blocked.
   simulator is not running, or the configured port is wrong.
 - **Connection timed out** — the process is reachable but not answering within
   `--timeout-ms`; check editor startup, map loading, and firewall state.
+- **Traffic Manager bind error** — another process owns the configured Traffic
+  Manager port; select a verified free port with `--traffic-manager-port`.
 - **Version mismatch** — rebuild and reinstall LibCarla from the same commit as
   the running CARLA server. Bypass only for an intentional compatibility test.
 - **No spawn points available** — choose a map with recommended spawn points or

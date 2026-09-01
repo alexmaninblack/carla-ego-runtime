@@ -118,6 +118,13 @@ ParsedCommandLine ParseCommandLine(const std::vector<std::string> &arguments) {
       if (result.options.port == 0) {
         throw std::invalid_argument("--port must be between 1 and 65535");
       }
+    } else if (argument == "--traffic-manager-port") {
+      result.options.traffic_manager_port = ParseUnsigned<std::uint16_t>(
+          RequireValue(arguments, index), "--traffic-manager-port");
+      if (result.options.traffic_manager_port == 0) {
+        throw std::invalid_argument(
+            "--traffic-manager-port must be between 1 and 65535");
+      }
     } else if (argument == "--timeout-ms") {
       result.options.timeout_ms = ParseUnsigned<std::uint32_t>(
           RequireValue(arguments, index), "--timeout-ms");
@@ -375,6 +382,8 @@ Options:
       --version                 Show the runtime version
       --host HOST               CARLA RPC host (default: 127.0.0.1)
       --port PORT               CARLA RPC port (default: 2000)
+      --traffic-manager-port PORT
+                                Traffic Manager RPC port (default: 8000)
       --timeout-ms MS           RPC timeout in milliseconds (default: 10000)
       --role-name NAME          Ego vehicle role_name (default: hero)
       --blueprint ID            Blueprint used when spawning is needed
