@@ -260,6 +260,22 @@ class M61ToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unix-domain limit"):
                 RUNNER.control_paths(control_directory)
 
+    def test_interactive_runtime_and_controller_share_facts_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control_directory = Path(directory) / "c"
+            control_directory.mkdir(mode=0o700)
+            facts_socket = RUNNER.controller_facts_socket_path(control_directory)
+            self.assertEqual(facts_socket, control_directory / "facts.sock")
+
+        source = (REPOSITORY / "tools" / "run_m6_interactive.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"--facts-socket-file",\n        str(facts_socket_file)', source)
+        self.assertIn('"--run-id",\n        run_id', source)
+        self.assertIn('"--viss-development",', source)
+        self.assertIn('"--control-facts-socket",\n            str(facts_socket_file)', source)
+        self.assertIn('"--simulator-run-id",\n            run_id', source)
+
     def test_m6_acceptance_uses_a_short_private_runtime_directory(self):
         control_directory, socket_file, token_file = M6_RUNNER.create_control_paths()
         try:

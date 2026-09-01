@@ -107,6 +107,15 @@ def control_paths(control_directory: Path) -> tuple[Path, Path]:
     return socket_file, control_directory / "control.token"
 
 
+def controller_facts_socket_path(control_directory: Path) -> Path:
+    path = control_directory / "facts.sock"
+    if len(os.fsencode(path)) > PORTABLE_UNIX_SOCKET_PATH_MAX:
+        raise ValueError(
+            "controller facts socket path exceeds the portable Unix-domain limit"
+        )
+    return path
+
+
 def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     run_directory = arguments.run_directory
     run_directory.mkdir(parents=True, exist_ok=True)
@@ -115,6 +124,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     status_file = run_directory / "controller-status.json"
     gate_file = run_directory / "start.gate"
     socket_file, token_file = control_paths(arguments.control_directory)
+    facts_socket_file = controller_facts_socket_path(arguments.control_directory)
+    run_id = run_directory.name
     timeline_file = run_directory / "startup-timeline.json"
     manifest_path = run_directory / "manifest.json"
     if manifest_path.exists():
@@ -138,6 +149,10 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         str(socket_file),
         "--token-file",
         str(token_file),
+        "--facts-socket-file",
+        str(facts_socket_file),
+        "--run-id",
+        run_id,
     ]
     runtime_command = M5.runtime_command(
         arguments.runtime,
@@ -146,9 +161,18 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         arguments.private_key,
         True,
     )
+    runtime_command.extend(
+        [
+            "--viss-development",
+            "--control-facts-socket",
+            str(facts_socket_file),
+            "--simulator-run-id",
+            run_id,
+        ]
+    )
     manifest: Dict[str, Any] = {
         "schema_version": 1,
-        "run_id": run_directory.name,
+        "run_id": run_id,
         "status": "starting",
         "started_at": M5.utc_now(),
         "control_source": (
