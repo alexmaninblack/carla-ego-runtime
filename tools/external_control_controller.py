@@ -121,6 +121,30 @@ def blend_control(carla: Any, first: Any, second: Any, alpha: float) -> Any:
     )
 
 
+def force_vehicle_control(
+    client: Any, carla: Any, vehicle: Any, control: Any
+) -> None:
+    """Bypass LibCarla's sticky client cache after Traffic Manager control."""
+    responses = client.apply_batch_sync(
+        [carla.command.ApplyVehicleControl(vehicle.id, control)], False
+    )
+    if len(responses) != 1 or responses[0].error:
+        raise RuntimeError("CARLA rejected the forced vehicle-control transition")
+
+
+def require_control_readback(vehicle: Any, expected: Any) -> None:
+    actual = vehicle.get_control()
+    if any(
+        abs(float(observed) - float(required)) > 1e-6
+        for observed, required in (
+            (actual.throttle, expected.throttle),
+            (actual.brake, expected.brake),
+            (actual.steer, expected.steer),
+        )
+    ):
+        raise RuntimeError("CARLA actuator readback does not match selected control")
+
+
 def reset_scenario_vehicle(carla: Any, vehicle: Any, transform: Any) -> None:
     vehicle.apply_control(
         carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
@@ -460,6 +484,8 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
 
         while not STOP_REQUESTED:
             pending_facts_transition = None
+            pending_applied_transition = None
+            force_non_autopilot_control = False
             now = time.monotonic()
             if now - started_at > float(control_config["maximum_session_seconds"]):
                 completed = True
@@ -499,6 +525,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 if active_mode == "autopilot" and traffic_manager_port is not None:
                     handover_control = vehicle.get_control()
                     vehicle.set_autopilot(False, traffic_manager_port)
+                    force_non_autopilot_control = applied.mode != "autopilot"
                 if (
                     active_mode in {"autopilot", "scenario"}
                     and applied.mode == "manual"
@@ -540,28 +567,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 active_mode = applied.mode
                 active_mode_generation = applied.mode_generation
                 pending_facts_transition = (active_mode, reset_required)
-                emit(
-                    "drive_mode_applied",
-                    previous_mode=previous_mode,
-                    mode=active_mode,
-                    mode_generation=active_mode_generation,
-                )
-                write_status(
-                    drive_mode=active_mode,
-                    scenario=(
-                        {
-                            "id": scenario_config["id"],
-                            "mode_generation": active_mode_generation,
-                            "state": "running",
-                            "phase": scenario_machine.phase,
-                            "updated_at": utc_now(),
-                        }
-                        if active_mode == "scenario"
-                        and scenario_config is not None
-                        and scenario_machine is not None
-                        else status.get("scenario")
-                    ),
-                )
+                pending_applied_transition = previous_mode
 
             if active_mode == "scenario":
                 if scenario_config is None or scenario_machine is None or obstacle is None:
@@ -620,7 +626,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                             float(scenario_config["maximum_steering"]),
                         ),
                     )
-                vehicle.apply_control(requested)
+                if force_non_autopilot_control:
+                    force_vehicle_control(client, carla, vehicle, requested)
+                else:
+                    vehicle.apply_control(requested)
             elif active_mode != "autopilot":
                 requested = carla.VehicleControl(
                     throttle=applied.throttle,
@@ -637,7 +646,10 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     if alpha >= 1.0:
                         handover_started_at = None
                         handover_control = None
-                vehicle.apply_control(requested)
+                if force_non_autopilot_control:
+                    force_vehicle_control(client, carla, vehicle, requested)
+                else:
+                    vehicle.apply_control(requested)
             if applied.safe_stop != last_safe_stop or applied.reason != last_reason:
                 emit(
                     "control_applied",
@@ -664,9 +676,33 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             if int(completed_snapshot.frame) != completed_frame_id:
                 raise RuntimeError("completed CARLA frame identity is inconsistent")
             if pending_facts_transition is not None:
+                if pending_facts_transition[0] == "safe_stop":
+                    require_control_readback(vehicle, requested)
                 facts_state.complete_transition(
                     pending_facts_transition[0],
                     reset_completed=pending_facts_transition[1],
+                )
+                emit(
+                    "drive_mode_applied",
+                    previous_mode=pending_applied_transition,
+                    mode=active_mode,
+                    mode_generation=active_mode_generation,
+                )
+                write_status(
+                    drive_mode=active_mode,
+                    scenario=(
+                        {
+                            "id": scenario_config["id"],
+                            "mode_generation": active_mode_generation,
+                            "state": "running",
+                            "phase": scenario_machine.phase,
+                            "updated_at": utc_now(),
+                        }
+                        if active_mode == "scenario"
+                        and scenario_config is not None
+                        and scenario_machine is not None
+                        else status.get("scenario")
+                    ),
                 )
             facts_sender.send(
                 facts_state.completed_frame(

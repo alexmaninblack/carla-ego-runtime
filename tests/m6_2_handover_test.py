@@ -75,8 +75,74 @@ class Carla:
     class Vector3D(Vector):
         pass
 
+    class command:
+        class ApplyVehicleControl:
+            def __init__(self, actor_id, control):
+                self.actor_id = actor_id
+                self.control = control
+
+
+class StickyVehicle:
+    def __init__(self):
+        self.id = 42
+        self.cached = Carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+        self.server = self.cached
+
+    def get_control(self):
+        return self.server
+
+
+class BatchClient:
+    def __init__(self, vehicle):
+        self.vehicle = vehicle
+        self.calls = []
+
+    def apply_batch_sync(self, commands, do_tick):
+        self.calls.append((commands, do_tick))
+        self.vehicle.server = commands[0].control
+        return [type("Response", (), {"error": ""})()]
+
 
 class HandoverTests(unittest.TestCase):
+    def test_tm_exit_forces_control_and_verifies_readback_before_completion(self):
+        source = (
+            REPOSITORY / "tools" / "external_control_controller.py"
+        ).read_text(encoding="utf-8")
+        disable = source.index("vehicle.set_autopilot(False, traffic_manager_port)")
+        forced = source.index("force_vehicle_control(", disable)
+        tick = source.index("completed_frame_id = int(", forced)
+        readback = source.index("require_control_readback(vehicle, requested)", tick)
+        complete = source.index("facts_state.complete_transition(", readback)
+        self.assertLess(disable, forced)
+        self.assertLess(forced, tick)
+        self.assertLess(tick, readback)
+        self.assertLess(readback, complete)
+
+    def test_forced_safe_stop_bypasses_stale_sticky_cache_on_every_tm_exit(self):
+        vehicle = StickyVehicle()
+        client = BatchClient(vehicle)
+        safe_stop = Carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+
+        for _ in range(2):
+            vehicle.server = Carla.VehicleControl(
+                throttle=0.2, brake=0.0, steer=0.3
+            )
+            CONTROLLER.force_vehicle_control(client, Carla, vehicle, safe_stop)
+            CONTROLLER.require_control_readback(vehicle, safe_stop)
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertTrue(all(call[1] is False for call in client.calls))
+        self.assertTrue(
+            all(call[0][0].actor_id == vehicle.id for call in client.calls)
+        )
+
+    def test_safe_stop_readback_rejects_retained_tm_control(self):
+        vehicle = StickyVehicle()
+        vehicle.server = Carla.VehicleControl(throttle=0.2, brake=0.0, steer=0.3)
+        safe_stop = Carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
+        with self.assertRaisesRegex(RuntimeError, "actuator readback"):
+            CONTROLLER.require_control_readback(vehicle, safe_stop)
+
     def test_manual_handover_blends_without_overlapping_pedals(self):
         automatic = Carla.VehicleControl(throttle=0.4, brake=0.0, steer=0.3)
         manual = Carla.VehicleControl(throttle=0.0, brake=0.6, steer=-0.1)
