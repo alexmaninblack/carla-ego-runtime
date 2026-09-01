@@ -160,10 +160,19 @@ final class ControlView: NSView {
         }
         if mode == "manual" {
             let braking = pressed.contains(125)
-            let throttleTarget = pressed.contains(126) && !braking ? 0.55 : 0.0
+            let accelerating = pressed.contains(126) && !braking
+            let throttleTarget = accelerating ? 0.55 : 0.0
             let brakeTarget = braking ? 0.75 : 0.0
-            throttle = braking ? 0 : approach(throttle, throttleTarget, 1.25 * elapsed)
-            brake = approach(brake, brakeTarget, 3.0 * elapsed)
+            if braking {
+                throttle = 0
+                brake = approach(brake, brakeTarget, 3.0 * elapsed)
+            } else if accelerating {
+                throttle = approach(throttle, throttleTarget, 1.25 * elapsed)
+                brake = 0
+            } else {
+                throttle = approach(throttle, throttleTarget, 1.25 * elapsed)
+                brake = approach(brake, brakeTarget, 3.0 * elapsed)
+            }
             let steeringTarget: Double
             if pressed.contains(123) && !pressed.contains(124) {
                 steeringTarget = -0.55

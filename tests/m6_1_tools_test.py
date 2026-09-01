@@ -52,6 +52,21 @@ class M61ToolTests(unittest.TestCase):
         self.assertLess(steer_left[0], throttle[0])
         self.assertGreater(steer_right[0], throttle[0])
 
+    def test_keyboard_manual_pedals_are_mutually_exclusive(self):
+        source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
+        manual_tick = source[
+            source.index('if mode == "manual" {', source.index("private func tick()")) :
+            source.index("let steeringTarget", source.index("private func tick()"))
+        ]
+        self.assertIn("if braking {\n                throttle = 0", manual_tick)
+        self.assertIn(
+            "else if accelerating {\n"
+            "                throttle = approach(throttle, throttleTarget, "
+            "1.25 * elapsed)\n"
+            "                brake = 0",
+            manual_tick,
+        )
+
     def test_status_and_actions_use_centered_card_text(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
         self.assertIn("centeredText(statusDetail", source)
