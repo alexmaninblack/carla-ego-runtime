@@ -36,6 +36,8 @@ int main() {
   Check(defaults.command == Command::kRun, "default command is run");
   Check(defaults.options.host == "127.0.0.1", "default host");
   Check(defaults.options.port == 2000, "default port");
+  Check(defaults.options.traffic_manager_port == 8000,
+        "default Traffic Manager port");
   Check(defaults.options.role_name == "hero", "default role");
   Check(defaults.options.max_frames == 1, "one telemetry frame by default");
   Check(defaults.options.fixed_delta_seconds == 0.05, "default fixed delta");
@@ -71,6 +73,8 @@ int main() {
                         "carla.local",
                         "--port",
                         "2100",
+                        "--traffic-manager-port",
+                        "8100",
                         "--timeout-ms",
                         "5000",
                         "--role-name",
@@ -131,6 +135,8 @@ int main() {
                         "--allow-version-mismatch"});
   Check(custom.options.host == "carla.local", "custom host");
   Check(custom.options.port == 2100, "custom port");
+  Check(custom.options.traffic_manager_port == 8100,
+        "custom Traffic Manager port");
   Check(custom.options.timeout_ms == 5000, "custom timeout");
   Check(custom.options.role_name == "ego", "custom role");
   Check(custom.options.blueprint_id == "vehicle.tesla.model3",
@@ -199,6 +205,10 @@ int main() {
   CheckThrows([] { ParseCommandLine({"--port", "0"}); }, "zero port rejected");
   CheckThrows([] { ParseCommandLine({"--port", "65536"}); },
               "oversized port rejected");
+  CheckThrows([] { ParseCommandLine({"--traffic-manager-port", "0"}); },
+              "zero Traffic Manager port rejected");
+  CheckThrows([] { ParseCommandLine({"--traffic-manager-port", "65536"}); },
+              "oversized Traffic Manager port rejected");
   CheckThrows([] { ParseCommandLine({"--timeout-ms"}); },
               "missing value rejected");
   CheckThrows([] { ParseCommandLine({"--host", "--no-spawn"}); },
