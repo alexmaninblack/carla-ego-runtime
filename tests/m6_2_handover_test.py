@@ -77,6 +77,36 @@ class Carla:
 
 
 class HandoverTests(unittest.TestCase):
+    def test_repeated_brake_after_traffic_manager_is_not_cached_away(self):
+        class Blueprint:
+            values = {"role_name": "", "sticky_control": "true"}
+
+            def has_attribute(self, name):
+                return name in self.values
+
+            def set_attribute(self, name, value):
+                self.values[name] = value
+
+        blueprint = Blueprint()
+        CONTROLLER.configure_ego_blueprint(blueprint, "hero")
+        self.assertEqual(blueprint.values["role_name"], "hero")
+        self.assertEqual(blueprint.values["sticky_control"], "false")
+        # Reproduce LibCarla/client/Vehicle.cpp's independent command cache:
+        # this proxy last sent full brake, TM then sent throttle via its batch.
+        cached = (0.0, 1.0)
+        physical = (0.4, 0.0)
+        requested = (0.0, 1.0)
+        if blueprint.values["sticky_control"] != "true" or requested != cached:
+            physical = requested
+        self.assertEqual(physical, (0.0, 1.0))
+
+    def test_missing_control_attribute_is_rejected_before_spawn(self):
+        blueprint = type("Blueprint", (), {"has_attribute": lambda _, name: name == "role_name"})()
+        with self.assertRaisesRegex(RuntimeError, "control attributes"):
+            CONTROLLER.configure_ego_blueprint(blueprint, "hero")
+        with self.assertRaises(RuntimeError):
+            CONTROLLER.configure_ego_blueprint(None, "hero")
+
     def test_manual_handover_blends_without_overlapping_pedals(self):
         automatic = Carla.VehicleControl(throttle=0.4, brake=0.0, steer=0.3)
         manual = Carla.VehicleControl(throttle=0.0, brake=0.6, steer=-0.1)

@@ -121,6 +121,17 @@ def blend_control(carla: Any, first: Any, second: Any, alpha: float) -> Any:
     )
 
 
+def configure_ego_blueprint(blueprint: Any, role_name: str) -> None:
+    if blueprint is None or not all(
+        blueprint.has_attribute(name) for name in ("role_name", "sticky_control")
+    ):
+        raise RuntimeError("configured vehicle blueprint lacks required control attributes")
+    blueprint.set_attribute("role_name", role_name)
+    # Traffic Manager bypasses this client's ApplyControl cache. Repeated full
+    # brake must still reach the server after returning from autopilot.
+    blueprint.set_attribute("sticky_control", "false")
+
+
 def reset_scenario_vehicle(carla: Any, vehicle: Any, transform: Any) -> None:
     vehicle.apply_control(
         carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
@@ -255,9 +266,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             raise RuntimeError("external-control spawn point is unavailable")
         blueprint_library = world.get_blueprint_library()
         blueprint = blueprint_library.find(vehicle_config["blueprint"])
-        if blueprint is None or not blueprint.has_attribute("role_name"):
-            raise RuntimeError("configured vehicle blueprint is unavailable")
-        blueprint.set_attribute("role_name", vehicle_config["role_name"])
+        configure_ego_blueprint(blueprint, vehicle_config["role_name"])
         vehicle = world.try_spawn_actor(blueprint, spawn_points[start_index])
         if vehicle is None:
             raise RuntimeError(f"start spawn point {start_index} is occupied")
@@ -339,6 +348,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             emit_control,
             validate_mode,
             available_modes,
+            orchestration_reset_supported=scenario_config is None,
         )
         server = PROTOCOL.LocalControlServer(
             arguments.socket_file,
@@ -480,7 +490,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             )
             if mode_changed:
                 previous_mode = active_mode
-                reset_required = applied.mode == "scenario"
+                reset_required = applied.mode == "scenario" or applied.reset_requested
                 facts_state.begin_transition(
                     applied.mode, applied.mode_generation, reset_required
                 )
@@ -537,6 +547,16 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                         scenario_id=scenario_config["id"],
                         mode_generation=applied.mode_generation,
                     )
+                elif applied.reset_requested:
+                    # The existing tick owner performs the same physical ego
+                    # reset, without selecting Scenario or enabling driving.
+                    if applied.mode != "safe_stop" or scenario_config is not None:
+                        raise RuntimeError("standalone reset requires the plain stopped scene")
+                    reset_scenario_vehicle(carla, vehicle, spawn_points[start_index])
+                    last_location = vehicle.get_location()
+                    collision_frames.clear()
+                    handover_started_at = None
+                    handover_control = None
                 active_mode = applied.mode
                 active_mode_generation = applied.mode_generation
                 pending_facts_transition = (active_mode, reset_required)
@@ -689,6 +709,13 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 velocity.x**2 + velocity.y**2 + velocity.z**2
             )
             maximum_speed_kmh = max(maximum_speed_kmh, current_speed_kmh)
+            control_state.observe_completed_frame(
+                now=time.monotonic(), run_id=arguments.run_id, ego_actor_id=int(vehicle.id),
+                frame_id=completed_frame_id,
+                simulation_time=float(completed_snapshot.timestamp.elapsed_seconds),
+                active_mode=active_mode, control_generation=facts_state.control_generation,
+                reset_generation=facts_state.reset_generation, speed_kmh=current_speed_kmh,
+                brake=float(vehicle.get_control().brake))
             if (
                 active_mode == "scenario"
                 and scenario_config is not None

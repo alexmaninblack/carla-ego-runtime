@@ -2,7 +2,9 @@ import importlib.util
 import json
 import os
 import tempfile
+import subprocess
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 
@@ -25,6 +27,17 @@ M6_RUNNER = load_module("m6_runner_tested", REPOSITORY / "tools" / "run_m6.py")
 
 
 class M5ToolTests(unittest.TestCase):
+    def test_owned_interactive_stop_does_not_force_kill_after_timeout(self):
+        captured = object.__new__(RUNNER.CapturedProcess)
+        captured.process = Mock()
+        captured.process.poll.return_value = None
+        captured.wait = Mock(side_effect=subprocess.TimeoutExpired("fixture", 1))
+        with self.assertRaises(subprocess.TimeoutExpired):
+            captured.stop(timeout=1, allow_kill=False)
+        captured.process.send_signal.assert_called_once()
+        captured.process.terminate.assert_called_once()
+        captured.process.kill.assert_not_called()
+
     def setUp(self):
         self.config_path = REPOSITORY / "config" / "m5_town10hd_route.json"
         self.config = CONTROLLER.load_config(self.config_path)

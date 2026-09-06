@@ -496,7 +496,7 @@ carla::SharedPtr<cc::Sensor> SpawnGnssSensor(cc::World &world,
 CarlaVehicleSample CollectSample(const cc::WorldSnapshot &snapshot,
                                  cc::Vehicle &vehicle,
                                  const std::string &run_id,
-                                 const SimulationClockAnchor &clock_anchor,
+                                 std::chrono::system_clock::time_point acquired_at,
                                  const WheelRadii &wheel_radii) {
   const auto actor_snapshot = snapshot.Find(vehicle.GetId());
   if (!actor_snapshot.has_value()) {
@@ -514,7 +514,7 @@ CarlaVehicleSample CollectSample(const cc::WorldSnapshot &snapshot,
   sample.ego_vehicle_id = std::to_string(vehicle.GetId());
   sample.frame_id = static_cast<std::uint64_t>(snapshot.GetFrame());
   sample.simulation_time_s = snapshot.GetTimestamp().elapsed_seconds;
-  sample.timestamp_utc = clock_anchor.TimestampFor(sample.simulation_time_s);
+  sample.timestamp_utc = acquired_at;
   sample.velocity_world_mps = {actor_snapshot->velocity.x,
                                actor_snapshot->velocity.y,
                                actor_snapshot->velocity.z};
@@ -610,13 +610,13 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
   }
   std::cout << "Chaos wheel telemetry: " << available_wheel_radii
             << " configured road wheel(s)\n";
-  std::optional<SimulationClockAnchor> clock_anchor;
   LatestGnssFixStore gnss_store;
   auto gnss_sensor =
       SpawnGnssSensor(world, *vehicle, options.gnss_sensor_tick_seconds);
   OwnedSensorGuard gnss_guard(gnss_sensor);
   gnss_sensor->Listen([&gnss_store](
                           carla::SharedPtr<carla::sensor::SensorData> data) {
+    const auto acquired_at = std::chrono::system_clock::now();
     const auto measurement =
         std::dynamic_pointer_cast<carla::sensor::data::GnssMeasurement>(data);
     if (!measurement) {
@@ -625,7 +625,7 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     gnss_store.Publish({static_cast<std::uint64_t>(measurement->GetFrame()),
                         measurement->GetTimestamp(), measurement->GetLatitude(),
                         measurement->GetLongitude(),
-                        measurement->GetAltitude()});
+                        measurement->GetAltitude(), acquired_at});
   });
   std::cout << "GNSS sensor: enabled (period "
             << options.gnss_sensor_tick_seconds
@@ -681,6 +681,9 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
     cc::WorldSnapshot snapshot =
         options.tick_owner ? (world.Tick(timeout), world.GetSnapshot())
                            : world.WaitForTick(timeout);
+    // Capture once at acquisition, before RPCs/control matching can wait.
+    // Simulation elapsed time is frame identity, not a UTC freshness clock.
+    const auto acquired_at = std::chrono::system_clock::now();
     const double simulation_time_s = snapshot.GetTimestamp().elapsed_seconds;
     if (chase_camera) {
       const auto actor_snapshot = snapshot.Find(vehicle->GetId());
@@ -692,19 +695,15 @@ void CollectVehicleState(cc::Client &client, cc::World &world,
       chase_camera->SetFrame(ChaseCameraPose(actor_snapshot->transform),
                              simulation_time_s);
     }
-    if (!clock_anchor.has_value()) {
-      clock_anchor.emplace(simulation_time_s, std::chrono::system_clock::now());
-    }
-
     const auto normalized = NormalizeVehicleSample(
-        CollectSample(snapshot, *vehicle, run_id, *clock_anchor,
+        CollectSample(snapshot, *vehicle, run_id, acquired_at,
                       wheel_radii));
     std::optional<NormalizedGnssFix> normalized_gnss;
     const auto gnss_sample =
         gnss_store.LatestFor(normalized.frame_id, normalized.simulation_time_s,
                              options.gnss_max_age_seconds);
     if (gnss_sample.has_value()) {
-      normalized_gnss = NormalizeGnssSample(*gnss_sample, *clock_anchor);
+      normalized_gnss = NormalizeGnssSample(*gnss_sample);
     }
     std::optional<SimulatorControlFacts> control_facts;
     if (control_channel) {

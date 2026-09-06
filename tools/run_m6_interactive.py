@@ -115,6 +115,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     status_file = run_directory / "controller-status.json"
     gate_file = run_directory / "start.gate"
     socket_file, token_file = control_paths(arguments.control_directory)
+    facts_socket_file = arguments.control_directory / "facts.sock"
+    run_id = run_directory.name
     timeline_file = run_directory / "startup-timeline.json"
     manifest_path = run_directory / "manifest.json"
     if manifest_path.exists():
@@ -138,6 +140,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         str(socket_file),
         "--token-file",
         str(token_file),
+        "--facts-socket-file", str(facts_socket_file),
+        "--run-id", run_id,
     ]
     runtime_command = M5.runtime_command(
         arguments.runtime,
@@ -146,6 +150,10 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         arguments.private_key,
         True,
     )
+    runtime_command.extend(["--control-facts-socket", str(facts_socket_file),
+                            "--simulator-run-id", run_id])
+    if getattr(arguments, "viss_development", False):
+        runtime_command.append("--viss-development")
     manifest: Dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_directory.name,
@@ -252,7 +260,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
 
         while keyboard.process.poll() is None:
             if STOP_REQUESTED.wait(0.1):
-                keyboard.stop()
+                keyboard.stop(allow_kill=False)
                 break
             if controller.process.poll() is not None:
                 raise RuntimeError("external controller stopped during live handover")
@@ -269,15 +277,15 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         )
 
         dashboard_health = dashboard.health_snapshot()
-        dashboard.stop()
+        dashboard.stop(allow_kill=False)
         dashboard = None
         if not M5.run_viss_probe(
             arguments.viss_client, config, arguments.certificate, log, "end"
         ):
             raise RuntimeError("independent VISS end probe failed")
-        runtime_exit = runtime.stop()
+        runtime_exit = runtime.stop(allow_kill=False)
         runtime = None
-        controller_exit = controller.stop()
+        controller_exit = controller.stop(allow_kill=False)
         controller = None
         final_status = M5.read_json(status_file)
         success = (
@@ -325,13 +333,13 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         return False
     finally:
         if keyboard is not None and keyboard.process.poll() is None:
-            keyboard.stop()
+            keyboard.stop(allow_kill=False)
         if dashboard is not None and dashboard.process.poll() is None:
-            dashboard.stop()
+            dashboard.stop(allow_kill=False)
         if runtime is not None and runtime.process.poll() is None:
-            runtime.stop()
+            runtime.stop(allow_kill=False)
         if controller is not None and controller.process.poll() is None:
-            controller.stop()
+            controller.stop(allow_kill=False)
         log.close()
         print(f"M6.2 artifacts: {run_directory}", flush=True)
 
@@ -349,6 +357,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--run-directory", required=True, type=Path)
     parser.add_argument("--control-directory", required=True, type=Path)
     parser.add_argument("--started-timestamp", required=True, type=float)
+    parser.add_argument("--viss-development", action="store_true",
+                        help="explicit local server-TLS profile; no client mTLS")
     return parser.parse_args()
 
 

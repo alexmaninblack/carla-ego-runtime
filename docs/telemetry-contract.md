@@ -1,4 +1,4 @@
-# VISS/VSS telemetry contract v0.3
+# VISS/VSS telemetry contract v0.4
 
 Status: **implemented for the vehicle-state, GNSS, VISS network, offline
 strict-role mTLS/assignment boundary, frame-coherent Safe Stop projection and
@@ -139,11 +139,25 @@ VM/Unit qualification remain separate work.
 
 ## Time and synchronization
 
-VISS timestamps use ISO 8601 UTC with a trailing `Z`. At the first sample, the
-runtime records a pair consisting of UTC time and current CARLA simulation
-time. Later timestamps add the elapsed simulation-time difference to that UTC
-anchor. This preserves monotonic simulated timing even when the simulator runs
-slower or faster than real time or the runtime attaches after frame zero.
+VISS timestamps use ISO 8601 UTC with a trailing `Z`. They represent real UTC
+at **Gateway acquisition**, not an extrapolation from CARLA simulation time.
+The Gateway captures `system_clock::now()` once immediately after receiving a
+world snapshot, before telemetry RPCs, camera work or control-fact matching.
+Every physical point and matched control/reset fact in that frame carries this
+same timestamp. A GNSS callback captures its own acquisition UTC once; later
+normalization and merging preserve it. Reads, subscriptions and retained
+snapshots never refresh timestamps. Duplicate/out-of-order frame rejection is
+unchanged. A slow collector or stopped stream therefore becomes stale rather
+than being made fresh by a later VISS request.
+
+This operator-approved amendment (2026-09-06) supersedes the original
+simulation-time-to-UTC anchor. Pauses, reset work and faster/slower simulation
+must not accumulate an offset against the VM's real-time freshness check.
+Simulation time remains separate and deterministic; UTC need not advance at
+simulation speed or be monotonic across a host clock correction. Downstream
+freshness/future-time checks remain unchanged. This timestamp describes
+Gateway acquisition, not independently measured simulator-side capture or
+network transit time; it is qualified here for the local CARLA/Gateway setup.
 
 `Vehicle.CarlaSimulation.RunId`, `FrameId`, and `SimulationTime` remain the
 authoritative deterministic synchronization values. A consumer must not infer
@@ -172,7 +186,7 @@ appear automatically in later snapshots when their source is available.
 
 The designated owner advances CARLA by exactly one synchronous tick and then
 builds one snapshot from that world frame. Vehicle-state points share the
-anchored timestamp and metadata of that state frame. Retained 10 Hz GNSS points
+acquisition timestamp and metadata of that state frame. Retained 10 Hz GNSS points
 keep the GNSS sensor's own timestamp and expose their source frame/time through
 the simulation overlay. The snapshot store accepts only strictly increasing
 state frame IDs and replaces its single retained snapshot atomically;

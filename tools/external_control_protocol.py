@@ -53,6 +53,7 @@ class AppliedControl:
     reason: str
     mode: str
     mode_generation: int
+    reset_requested: bool = False
 
 
 def _uint64(value: Any, name: str) -> int:
@@ -316,6 +317,7 @@ class ExternalControlState:
         event_sink: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         mode_validator: Optional[Callable[[str], Optional[str]]] = None,
         available_modes: Optional[set[str]] = None,
+        orchestration_reset_supported: bool = True,
     ):
         if not token:
             raise ValueError("token must not be empty")
@@ -344,6 +346,10 @@ class ExternalControlState:
         self._safe_stop_reason = "startup"
         self._mode = "safe_stop"
         self._mode_generation = 0
+        self._orchestration_reset_supported = orchestration_reset_supported
+        self._orchestration: Optional[Dict[str, Any]] = None
+        self._completed_frame: Optional[Dict[str, Any]] = None
+        self._completed_at = 0.0
         self._metrics: Dict[str, int] = {
             "acquisitions": 0,
             "commands": 0,
@@ -413,6 +419,14 @@ class ExternalControlState:
             raise ControlProtocolError("bad_request", "version must be 1, 2, or 3")
         action = _string(message, "action")
         _string(message, "requestId")
+
+        if action == "orchestrate":
+            return self._orchestrate_locked(message, now)
+
+        held = self._orchestration is not None and self._orchestration["held"]
+        if held and (action in {"acquire", "command"} or
+                     (action == "set_mode" and message.get("mode") != "safe_stop")):
+            raise ControlProtocolError("orchestration_busy", "vehicle is held in safe stop")
 
         if action == "acquire":
             supplied_token = _string(message, "token")
@@ -593,7 +607,104 @@ class ExternalControlState:
                 reason=self._safe_stop_reason,
                 mode=self._applied_mode(),
                 mode_generation=self._mode_generation,
+                reset_requested=self._consume_reset_locked(),
             )
+
+    def _consume_reset_locked(self) -> bool:
+        operation = self._orchestration
+        if operation and operation["held"] and operation.get("resetPending"):
+            operation["resetPending"] = False
+            return True
+        return False
+
+    def _orchestration_status_locked(self, now: float) -> Dict[str, Any]:
+        operation = self._orchestration
+        return {"status": "ok", "operationId": operation["id"] if operation else None,
+                "held": bool(operation and operation["held"]),
+                "phase": operation["phase"] if operation else "IDLE",
+                "fresh": self._completed_frame is not None and 0 <= now - self._completed_at <= 0.25,
+                "frame": dict(self._completed_frame) if self._completed_frame else None}
+
+    def _orchestrate_locked(self, message: Dict[str, Any], now: float) -> Dict[str, Any]:
+        if message.get("version") != 3 or set(message) != {
+                "version", "action", "requestId", "token", "operation", "operationId"}:
+            raise ControlProtocolError("bad_request", "invalid orchestration request")
+        if not hmac.compare_digest(_string(message, "token"), self._token):
+            raise ControlProtocolError("unauthorized", "control is unavailable")
+        operation_id = _string(message, "operationId")
+        try:
+            if str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError()
+        except ValueError:
+            raise ControlProtocolError("bad_request", "invalid operation identity") from None
+        action = _string(message, "operation")
+        if action == "status":
+            return self._orchestration_status_locked(now)
+        current = self._orchestration
+        if action == "safe_stop":
+            if current and current["id"] == operation_id:
+                return self._orchestration_status_locked(now)
+            if current and current["held"]:
+                raise ControlProtocolError("orchestration_busy", "another operation holds safe stop")
+            self._mode = "safe_stop"
+            self._advance_mode_generation()
+            self._select_safe_stop("orchestrator")
+            self._orchestration = {"id": operation_id, "held": True, "phase": "STOPPING"}
+            return self._orchestration_status_locked(now)
+        if action not in {"reset", "release"}:
+            raise ControlProtocolError("bad_request", "unsupported orchestration operation")
+        if not current or current["id"] != operation_id:
+            raise ControlProtocolError("orchestration_mismatch", "operation does not own safe stop")
+        if action == "release" and not current["held"]:
+            return self._orchestration_status_locked(now)
+        if not current["held"]:
+            raise ControlProtocolError("orchestration_mismatch", "operation already released")
+        if action == "reset" and current["phase"] in {"RESETTING", "RESET"}:
+            return self._orchestration_status_locked(now)
+        result = self._orchestration_status_locked(now)
+        frame = result["frame"]
+        if (current["phase"] not in {"SAFE_STOP", "RESET"} or not result["fresh"] or
+                not frame or frame["activeMode"] != "SAFE_STOP" or frame["speedKmh"] > 0.5 or
+                frame["brake"] < 0.99 or frame["controlGeneration"] != self._mode_generation):
+            raise ControlProtocolError("safe_stop_not_confirmed", "completed stopped frame is required")
+        if action == "reset":
+            if not self._orchestration_reset_supported:
+                raise ControlProtocolError("reset_unavailable", "standalone reset is unavailable for this scene")
+            if frame["resetGeneration"] == (1 << 64) - 1:
+                raise ControlProtocolError("reset_unavailable", "reset generation is exhausted")
+            self._advance_mode_generation()
+            current.update(phase="RESETTING", resetPending=True, resetBaseline=frame["resetGeneration"])
+        else:
+            current.update(held=False, phase="RELEASED")
+        return self._orchestration_status_locked(now)
+
+    def observe_completed_frame(self, *, now: float, run_id: str, ego_actor_id: int,
+                                frame_id: int, simulation_time: float, active_mode: str,
+                                control_generation: int, reset_generation: int,
+                                speed_kmh: float, brake: float) -> None:
+        """Called only by the tick owner after a real completed CARLA frame."""
+        if not all(math.isfinite(value) for value in (now, simulation_time, speed_kmh, brake)):
+            raise ValueError("non-finite completed frame")
+        if speed_kmh < 0 or not 0 <= brake <= 1:
+            raise ValueError("invalid completed motion")
+        with self._lock:
+            if self._completed_frame and frame_id <= self._completed_frame["frameId"]:
+                raise ValueError("completed frames must advance")
+            self._completed_frame = {
+                "runId": run_id, "egoActorId": ego_actor_id, "frameId": frame_id,
+                "simulationTime": simulation_time, "activeMode": active_mode.upper(),
+                "controlGeneration": control_generation, "resetGeneration": reset_generation,
+                "speedKmh": speed_kmh, "brake": brake}
+            self._completed_at = now
+            current = self._orchestration
+            stopped = (active_mode == "safe_stop" and control_generation == self._mode_generation
+                       and speed_kmh <= 0.5 and brake >= 0.99)
+            if current and current["held"] and stopped:
+                if current["phase"] == "STOPPING":
+                    current["phase"] = "SAFE_STOP"
+                elif current["phase"] == "RESETTING" and not current.get("resetPending"):
+                    if reset_generation == current["resetBaseline"] + 1:
+                        current["phase"] = "RESET"
 
     def force_safe_stop(self, reason: str) -> None:
         if not reason:

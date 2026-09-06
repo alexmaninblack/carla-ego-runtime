@@ -1,5 +1,36 @@
 # External control contract v3
 
+## Demo Orchestrator Safe Stop and Reset
+
+The operator authorized this host-side extension on 2026-09-05. Protocol v3
+adds `action: "orchestrate"` on the existing private socket. Exact fields are
+`version`, `action`, `requestId`, `token`, `operation` and canonical UUID
+`operationId`. The protected per-run token is not a Cloud or VISS identity.
+
+Operations are `safe_stop`, `status`, `reset` and `release`. Safe Stop takes
+an interlock, preserving the native UI session but rejecting driving until
+release. `STOPPING` becomes `SAFE_STOP` only after a real completed stopped
+CARLA frame with full brake. Another operation cannot replace the holder;
+duplicates cannot repeat its side effects. Response loss/disconnect leaves
+the interlock held, never automatically resuming driving.
+
+Reset requires the same operation and a fresh stopped frame. The existing
+tick owner resets the ego to its initial spawn without entering Scenario.
+`RESETTING` becomes `RESET` only after a real post-reset frame and exactly one
+new reset generation. This is supported for the plain manual/autopilot scene,
+not the hybrid obstacle scene. Duplicate resets do not reset twice.
+
+Status reports held operation, phase, freshness and completed frame facts.
+Release requires a fresh stopped frame and leaves Safe Stop active. The
+Orchestrator must prove source detachment before reset; Controller completion
+does not prove source exclusivity or VDP readiness. No token is returned in
+status, snapshots or logs.
+
+The interactive runner used by `democtl simulation stop` requests graceful
+child shutdown and disables its inherited SIGKILL fallback. Timeout remains
+an incomplete shutdown to reconcile, not permission to force-kill a child.
+Other M5 callers retain their existing default shutdown policy.
+
 ## Transport and access
 
 The M6 development profile uses newline-delimited JSON over a Unix-domain
@@ -38,6 +69,14 @@ separate, explicit action.
   actor while the external controller continues to own simulation ticks.
 - `safe_stop` disables automatic control and applies zero throttle, full brake,
   and centred steering.
+
+The owned ego blueprint explicitly sets `sticky_control=false` before spawn.
+CARLA's client-side ApplyControl cache is independent of Traffic Manager's
+batch controls: without this setting, a repeated full-brake request after
+autopilot can be suppressed even though the actual actor has throttle applied.
+Every Controller brake request must reach CARLA. A blueprint without that
+attribute is rejected before spawn; there is no silent compatibility fallback.
+This changes neither the tick owner nor the Safe Stop evidence thresholds.
 
 The requested protocol mode is not automatically the applied vehicle mode.
 Manual mode remains applied `SAFE_STOP` until the first valid actuator command;

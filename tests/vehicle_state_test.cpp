@@ -117,11 +117,20 @@ int main() {
              .angular_speed_rad_s.has_value(),
         "non-finite optional wheel telemetry is omitted");
 
-  const auto anchor_time = std::chrono::system_clock::time_point{} +
+  const auto acquired_at = std::chrono::system_clock::time_point{} +
                            std::chrono::seconds(100);
-  const SimulationClockAnchor anchor(25.0, anchor_time);
-  Check(anchor.TimestampFor(25.5) == anchor_time + std::chrono::milliseconds(500),
-        "simulation-time delta drives UTC timestamp");
+  auto before_pause = ValidSample();
+  before_pause.simulation_time_s = 25.0;
+  before_pause.timestamp_utc = acquired_at;
+  auto after_pause = before_pause;
+  ++after_pause.frame_id;
+  after_pause.simulation_time_s += 0.05;
+  after_pause.timestamp_utc += std::chrono::seconds(3);
+  Check(NormalizeVehicleSample(after_pause).timestamp_utc ==
+            acquired_at + std::chrono::seconds(3),
+        "fresh frame after pause preserves real acquisition UTC, not simulated delta");
+  Check(NormalizeVehicleSample(before_pause).timestamp_utc == acquired_at,
+        "old frame retains its acquisition UTC and is not made fresh");
 
   if (failures == 0) {
     std::cout << "vehicle state tests passed\n";

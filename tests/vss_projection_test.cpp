@@ -225,11 +225,31 @@ int main() {
   LatestVssSignalStore store;
   Check(store.Publish(snapshot), "first frame accepted");
   Check(!store.Publish(snapshot), "duplicate frame rejected");
+  Check(store.Latest()->timestamp == snapshot.timestamp &&
+            Find(*store.Latest(), "Vehicle.Speed")->timestamp == snapshot.timestamp,
+        "repeated cached reads retain acquisition time, not request time");
   auto newer = snapshot;
   newer.frame_id = 101;
   Check(store.Publish(newer), "newer frame accepted");
   Check(store.publish_count() == 2, "exactly one update counted per frame");
   Check(store.Latest()->frame_id == 101, "only latest snapshot retained");
+
+  auto resumed = state;
+  resumed.frame_id = 102;
+  resumed.simulation_time_s += 0.05;
+  resumed.timestamp_utc += std::chrono::seconds(3);
+  const SimulatorControlFacts resumed_facts{
+      resumed.frame_id, SimulatorDriveMode::kSafeStop,
+      SimulatorTransitionState::kStable, 7, 3, false, false};
+  const auto resumed_snapshot = ProjectToVss(resumed, gnss, resumed_facts);
+  Check(store.Publish(resumed_snapshot), "new frame after real-time pause accepted");
+  Check(resumed_snapshot.timestamp == "1970-01-01T00:00:04.234Z" &&
+            Find(resumed_snapshot, "Vehicle.CarlaSimulation.Control.ActiveMode")
+                    ->timestamp == resumed_snapshot.timestamp,
+        "post-pause physics and Safe Stop facts share real acquisition UTC");
+  Check(Find(resumed_snapshot, "Vehicle.CurrentLocation.Latitude")->timestamp ==
+            "1970-01-01T00:00:01.134Z",
+        "retained GNSS cannot be made fresh by new frame acquisition");
 
   state.engine_rpm.reset();
   state.equivalent_front_axle_angle_iso_deg.reset();

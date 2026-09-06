@@ -258,6 +258,10 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/external_control_protocol_test.py"
     )
     add_test(
+      NAME orchestrator_control
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/orchestrator_control_test.py"
+    )
+    add_test(
       NAME m6_tools
       COMMAND
         "${Python3_EXECUTABLE}"

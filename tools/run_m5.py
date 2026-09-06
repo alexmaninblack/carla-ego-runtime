@@ -252,7 +252,7 @@ class CapturedProcess:
                 snapshot["event_latency_ms_maximum"] = self._latency_max
             return snapshot
 
-    def stop(self, timeout: float = 20) -> int:
+    def stop(self, timeout: float = 20, *, allow_kill: bool = True) -> int:
         if self.process.poll() is not None:
             return int(self.process.returncode)
         self.process.send_signal(signal.SIGINT)
@@ -263,6 +263,8 @@ class CapturedProcess:
             try:
                 return self.wait(5)
             except subprocess.TimeoutExpired:
+                if not allow_kill:
+                    raise
                 self.process.kill()
                 return self.wait(5)
 

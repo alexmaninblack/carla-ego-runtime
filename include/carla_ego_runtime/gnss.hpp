@@ -14,6 +14,8 @@ struct CarlaGnssSample {
   double latitude_deg = 0.0;
   double longitude_deg = 0.0;
   double altitude_m = 0.0;
+  // UTC at acquisition of this sensor measurement; never retimestamp on merge.
+  std::chrono::system_clock::time_point acquired_at_utc;
 };
 
 struct NormalizedGnssFix {
@@ -25,8 +27,7 @@ struct NormalizedGnssFix {
   double altitude_m = 0.0;
 };
 
-NormalizedGnssFix NormalizeGnssSample(const CarlaGnssSample &sample,
-                                     const SimulationClockAnchor &clock_anchor);
+NormalizedGnssFix NormalizeGnssSample(const CarlaGnssSample &sample);
 
 // Thread-safe handoff between CARLA's sensor callback and the synchronous
 // frame assembler. It retains one fix, rejects non-increasing source frames,
