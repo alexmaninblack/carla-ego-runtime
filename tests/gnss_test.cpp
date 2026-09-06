@@ -37,29 +37,24 @@ void CheckThrows(Callable callable, const std::string &message) {
 int main() {
   using namespace carla_ego_runtime;
 
-  const auto anchor_time = std::chrono::system_clock::time_point{} +
+  const auto acquired_at = std::chrono::system_clock::time_point{} +
                            std::chrono::seconds(100);
-  const SimulationClockAnchor anchor(10.0, anchor_time);
-  const CarlaGnssSample sample{42, 10.1, 52.520008, 13.404954, 37.25};
-  const auto fix = NormalizeGnssSample(sample, anchor);
+  const CarlaGnssSample sample{42, 10.1, 52.520008, 13.404954, 37.25, acquired_at};
+  const auto fix = NormalizeGnssSample(sample);
   Check(fix.source_frame_id == 42, "GNSS source frame retained");
   CheckNear(fix.latitude_deg, 52.520008, 1.0e-12, "latitude retained");
   CheckNear(fix.longitude_deg, 13.404954, 1.0e-12, "longitude retained");
   CheckNear(fix.altitude_m, 37.25, 1.0e-12, "altitude retained");
-  const auto expected_timestamp = anchor_time + std::chrono::milliseconds(100);
-  const auto timestamp_error = fix.timestamp_utc > expected_timestamp
-                                   ? fix.timestamp_utc - expected_timestamp
-                                   : expected_timestamp - fix.timestamp_utc;
-  Check(timestamp_error <= std::chrono::microseconds(1),
-        "GNSS timestamp anchored to sensor simulation time");
+  Check(fix.timestamp_utc == acquired_at,
+        "GNSS preserves UTC captured at its own acquisition");
 
   auto invalid = sample;
   invalid.latitude_deg = 90.01;
-  CheckThrows([&] { NormalizeGnssSample(invalid, anchor); },
+  CheckThrows([&] { NormalizeGnssSample(invalid); },
               "out-of-range latitude rejected");
   invalid = sample;
   invalid.longitude_deg = -180.01;
-  CheckThrows([&] { NormalizeGnssSample(invalid, anchor); },
+  CheckThrows([&] { NormalizeGnssSample(invalid); },
               "out-of-range longitude rejected");
 
   LatestGnssFixStore store;
@@ -78,6 +73,9 @@ int main() {
         "same-frame GNSS fix available");
   Check(store.LatestFor(44, 10.3, 0.5).has_value(),
         "fresh retained GNSS fix available to later frame");
+  Check(NormalizeGnssSample(*store.LatestFor(44, 10.3, 0.5)).timestamp_utc ==
+            acquired_at,
+        "retained GNSS fix is not retimestamped by a later frame or pause");
   Check(!store.LatestFor(41, 10.05, 0.5).has_value(),
         "future GNSS source frame unavailable");
   Check(!store.LatestFor(60, 10.7, 0.5).has_value(),

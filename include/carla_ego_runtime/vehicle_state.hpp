@@ -81,17 +81,4 @@ std::optional<double> EquivalentFrontAxleAngleDegrees(
 
 NormalizedVehicleState NormalizeVehicleSample(const CarlaVehicleSample &sample);
 
-class SimulationClockAnchor {
- public:
-  SimulationClockAnchor(double simulation_time_s,
-                        std::chrono::system_clock::time_point timestamp_utc);
-
-  std::chrono::system_clock::time_point TimestampFor(
-      double simulation_time_s) const;
-
- private:
-  double simulation_time_s_;
-  std::chrono::system_clock::time_point timestamp_utc_;
-};
-
 }  // namespace carla_ego_runtime

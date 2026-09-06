@@ -162,21 +162,4 @@ NormalizedVehicleState NormalizeVehicleSample(const CarlaVehicleSample &sample) 
   return state;
 }
 
-SimulationClockAnchor::SimulationClockAnchor(
-    double simulation_time_s,
-    std::chrono::system_clock::time_point timestamp_utc)
-    : simulation_time_s_(simulation_time_s), timestamp_utc_(timestamp_utc) {
-  RequireFinite(simulation_time_s_, "simulation_time_s");
-}
-
-std::chrono::system_clock::time_point SimulationClockAnchor::TimestampFor(
-    double simulation_time_s) const {
-  RequireFinite(simulation_time_s, "simulation_time_s");
-  const auto elapsed = std::chrono::duration<double>(simulation_time_s -
-                                                      simulation_time_s_);
-  return timestamp_utc_ +
-         std::chrono::duration_cast<std::chrono::system_clock::duration>(
-             elapsed);
-}
-
 }  // namespace carla_ego_runtime

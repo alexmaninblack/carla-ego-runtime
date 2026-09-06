@@ -32,13 +32,11 @@ void ValidateGnssSample(const CarlaGnssSample &sample) {
 
 }  // namespace
 
-NormalizedGnssFix NormalizeGnssSample(
-    const CarlaGnssSample &sample,
-    const SimulationClockAnchor &clock_anchor) {
+NormalizedGnssFix NormalizeGnssSample(const CarlaGnssSample &sample) {
   ValidateGnssSample(sample);
   return {sample.frame_id,
           sample.simulation_time_s,
-          clock_anchor.TimestampFor(sample.simulation_time_s),
+          sample.acquired_at_utc,
           sample.latitude_deg,
           sample.longitude_deg,
           sample.altitude_m};
