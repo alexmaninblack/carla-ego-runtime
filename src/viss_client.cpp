@@ -9,12 +9,16 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -47,6 +51,7 @@ struct Options {
   std::size_t messages = 1;
   std::uint32_t monitor_period_ms = 250;
   bool monitor = false;
+  std::string demo_journal;
 };
 
 std::string Usage() {
@@ -66,6 +71,7 @@ Options:
       --messages N          Number of raw responses/events to read (default: 1)
       --monitor             Show the live basic-telemetry dashboard until Ctrl-C
       --monitor-period-ms N Dashboard refresh period (default: 250)
+      --demo-journal FILE   Owned demo journal for the selected-vehicle label
 )";
 }
 
@@ -106,6 +112,8 @@ Options Parse(const std::vector<std::string> &arguments) {
       options.certificate_chain_file = RequireValue(arguments, index);
     } else if (argument == "--key") {
       options.private_key_file = RequireValue(arguments, index);
+    } else if (argument == "--demo-journal") {
+      options.demo_journal = RequireValue(arguments, index);
     } else if (argument == "--request") {
       options.request = RequireValue(arguments, index);
     } else if (argument == "--messages") {
@@ -170,6 +178,10 @@ std::string BuildMonitorRequest(std::uint32_t period_ms) {
            "CurrentLocation.*",
            "CarlaSimulation.FrameId",
            "CarlaSimulation.SimulationTime",
+           "CarlaSimulation.RunId",
+           "CarlaSimulation.EgoVehicleId",
+           "CarlaSimulation.Control.*",
+           "CarlaSimulation.Reset.*",
            "CarlaSimulation.ChaosWheel.Row1.Left.*",
            "CarlaSimulation.ChaosWheel.Row1.Right.*",
            "CarlaSimulation.ChaosWheel.Row2.Left.*",
@@ -205,6 +217,7 @@ struct MonitorHealth {
   std::optional<double> previous_frame;
   std::optional<double> previous_simulation_time;
   std::optional<std::chrono::steady_clock::time_point> previous_received_at;
+  std::optional<std::chrono::steady_clock::time_point> last_advancing_frame_at;
   std::size_t event_count = 0;
 };
 
@@ -325,6 +338,9 @@ void UpdateHealth(const SignalValues &signals, std::string_view event_timestamp,
   const auto frame = Number(signals, "Vehicle.CarlaSimulation.FrameId");
   const auto simulation_time =
       Number(signals, "Vehicle.CarlaSimulation.SimulationTime");
+  if (frame.has_value() && (!health.previous_frame || *frame != *health.previous_frame)) {
+    health.last_advancing_frame_at = received_at;
+  }
   if (frame.has_value() && simulation_time.has_value() &&
       health.previous_frame.has_value() &&
       health.previous_simulation_time.has_value()) {
@@ -366,46 +382,97 @@ std::string Bar(const SignalValues &signals, std::string_view path) {
          "]";
 }
 
+bool DashboardLive(const Options &options, const MonitorHealth &health,
+                   std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) {
+  const auto limit = std::chrono::milliseconds(std::max<std::uint64_t>(5000, options.monitor_period_ms * 4ULL));
+  return health.previous_received_at && health.last_advancing_frame_at &&
+      now - *health.previous_received_at <= limit && now - *health.last_advancing_frame_at <= limit;
+}
+
+std::string VehicleLabel(const Options &options, const SignalValues &signals) {
+  if (options.demo_journal.empty()) return "Not linked to Demo Control";
+  try {
+    const auto status = std::filesystem::symlink_status(options.demo_journal);
+    if (!std::filesystem::is_regular_file(status) || std::filesystem::file_size(options.demo_journal) > 1048576) return "Unavailable";
+    std::ifstream stream(options.demo_journal);
+    std::string raw(1048577, '\0');
+    stream.read(raw.data(), raw.size());
+    raw.resize(static_cast<std::size_t>(stream.gcount()));
+    if (raw.size() > 1048576) return "Unavailable";
+    const auto document = json::parse(raw).as_object();
+    const auto &source = document.at("source").as_object();
+    if (source.at("runId").as_string() != Value(signals, "Vehicle.CarlaSimulation.RunId") ||
+        source.at("state").as_string() != "RUNNING" || !source.at("operation").is_null()) return "Unavailable / changing";
+    const auto &role = document.at("currentVehicle");
+    if (role.is_null()) return "Not assigned";
+    if (role.is_string() && role.as_string() == "test") return "Test Vehicle (selected)";
+    if (role.is_string() && role.as_string() == "production") return "Production Vehicle (selected)";
+  } catch (...) { }
+  return "Unavailable";
+}
+
+std::string ShortExercise(const SignalValues &signals) {
+  const auto id = Value(signals, "Vehicle.CarlaSimulation.RunId", "");
+  if (id.size() < 8 || !std::all_of(id.begin(), id.end(), [](unsigned char c) { return std::isxdigit(c) || c == '-'; })) return "--";
+  return id.substr(0, 8) + " / generation " + Value(signals, "Vehicle.CarlaSimulation.Reset.Generation");
+}
+
+std::string StopObservation(const SignalValues &signals, bool live) {
+  if (!live) return "UNKNOWN (stale telemetry)";
+  const auto mode = Value(signals, "Vehicle.CarlaSimulation.Control.ActiveMode");
+  const auto transition = Value(signals, "Vehicle.CarlaSimulation.Control.TransitionState");
+  const auto speed = Number(signals, "Vehicle.Speed");
+  const auto throttle = Number(signals, "Vehicle.Chassis.Accelerator.PedalPosition");
+  const auto brake = Number(signals, "Vehicle.Chassis.Brake.PedalPosition");
+  if (mode == "--" || transition == "--" || !speed || !throttle || !brake) return "UNKNOWN";
+  // Presentation of the current physical sample, not the runtime-owned
+  // twelve-frame FOTA authorization gate.
+  if (mode == "SAFE_STOP" && transition == "STABLE" && std::abs(*speed) <= 0.3 && *throttle <= 0.5 && *brake >= 95 &&
+      Value(signals, "Vehicle.CarlaSimulation.Reset.InProgress") == "false" &&
+      Value(signals, "Vehicle.CarlaSimulation.Reset.Discontinuity") == "false") return "STOPPED (Gateway observation)";
+  return "NOT ESTABLISHED";
+}
+
 void RenderDashboard(const Options &options, const SignalValues &signals,
                      std::string_view updated_at,
-                     const MonitorHealth &health) {
-  const double healthy_latency_ms =
-      std::max(1000.0, static_cast<double>(options.monitor_period_ms) * 4.0);
-  const bool live = health.event_latency_ms.has_value() &&
-                    *health.event_latency_ms <= healthy_latency_ms;
+                     const MonitorHealth &health, bool connected = true) {
+  const bool live = connected && DashboardLive(options, health);
   std::cout
       << "\033[2J\033[H"
       << "CARLA / VSS LIVE TELEMETRY\n"
-      << "===========================\n"
       << "wss://" << options.host << ':' << options.port
       << "   VISSv3   TLS verified\n"
-      << "Connection        CONNECTED\n"
-      << "Data health       " << (live ? "LIVE" : "WAITING") << '\n'
+      << "Connection        " << (connected ? health.event_count ? "CONNECTED" : "WAITING" : "DISCONNECTED") << '\n'
+      << "Data health       " << (live ? "LIVE" : health.event_count ? "STALE - last values only" : "WAITING") << '\n'
       << "Simulation rate   "
       << MetricText(health.simulation_hz, 1, " Hz") << '\n'
       << "Dashboard rate    "
       << MetricText(health.delivery_hz, 1, " events/s") << '\n'
       << "VISS latency      "
       << MetricText(health.event_latency_ms, 1, " ms") << " (local)\n"
-      << "Events received   " << health.event_count << "\n\n"
-      << "Frame             "
-      << Value(signals, "Vehicle.CarlaSimulation.FrameId") << '\n'
-      << "Simulation time   "
+      << "Events received   " << health.event_count << '\n'
+      << "Current vehicle   " << VehicleLabel(options, signals) << '\n'
+      << "Live exercise     " << ShortExercise(signals) << '\n'
+      << "Drive mode        " << (live ? Value(signals, "Vehicle.CarlaSimulation.Control.ActiveMode") : "UNKNOWN / stale") << '\n'
+      << "Safe Stop         " << StopObservation(signals, live) << '\n'
+      << "DRIVER ADVISORY    Gateway confirmation\n"
+      << "Brake             UNAVAILABLE - not connected\n"
+      << "Tire              UNAVAILABLE - not connected\n"
+      << "Frame " << Value(signals, "Vehicle.CarlaSimulation.FrameId")
+      << "   Simulation time "
       << NumberText(signals, "Vehicle.CarlaSimulation.SimulationTime", 2)
       << " s\n"
       << "Speed             " << std::setw(8)
-      << NumberText(signals, "Vehicle.Speed", 1) << " km/h\n"
-      << "Acceleration      " << std::setw(8)
+      << NumberText(signals, "Vehicle.Speed", 1) << " km/h   Accel "
       << NumberText(signals, "Vehicle.Acceleration.Longitudinal", 2)
-      << " m/s2 (longitudinal)\n"
-      << "Steering angle    " << std::setw(8)
+      << " m/s2\n"
+      << "Steering "
       << NumberText(signals, "Vehicle.Chassis.Axle.Row1.SteeringAngle", 1)
-      << " deg\n"
-      << "Gear              "
-      << Value(signals, "Vehicle.Powertrain.Transmission.CurrentGear") << '\n'
-      << "Engine            " << std::setw(8)
+      << " deg  Gear "
+      << Value(signals, "Vehicle.Powertrain.Transmission.CurrentGear")
+      << "  Engine "
       << NumberText(signals, "Vehicle.Powertrain.CombustionEngine.Speed", 0)
-      << " rpm\n\n"
+      << " rpm\n"
       << "Accelerator "
       << Bar(signals, "Vehicle.Chassis.Accelerator.PedalPosition") << ' '
       << std::setw(3)
@@ -413,7 +480,7 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
       << "%\n"
       << "Brake       " << Bar(signals, "Vehicle.Chassis.Brake.PedalPosition")
       << ' ' << std::setw(3)
-      << Value(signals, "Vehicle.Chassis.Brake.PedalPosition", "0") << "%\n\n"
+      << Value(signals, "Vehicle.Chassis.Brake.PedalPosition", "0") << "%\n"
       << "WHEEL DYNAMICS     FL       FR       RL       RR\n"
       << "Speed km/h       " << std::setw(7)
       << NumberText(signals, "Vehicle.Chassis.Axle.Row1.Wheel.Left.Speed", 1)
@@ -482,19 +549,17 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
              signals,
              "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle",
              1)
-      << "\n\n"
-      << "GNSS latitude     "
-      << NumberText(signals, "Vehicle.CurrentLocation.Latitude", 6) << '\n'
-      << "GNSS longitude    "
+      << "\n"
+      << "GNSS lat "
+      << NumberText(signals, "Vehicle.CurrentLocation.Latitude", 6) << "  lon "
       << NumberText(signals, "Vehicle.CurrentLocation.Longitude", 6) << '\n'
       << "GNSS altitude     "
-      << NumberText(signals, "Vehicle.CurrentLocation.Altitude", 1) << " m\n\n"
+      << NumberText(signals, "Vehicle.CurrentLocation.Altitude", 1) << " m\n"
       << "Last VISS event   " << updated_at << "\n"
-      << "Press Ctrl-C to stop the monitor.\n"
       << std::flush;
 }
 
-void RunMonitor(SecureWebSocket &client, const Options &options) {
+void RunMonitor(SecureWebSocket &client, const Options &options, asio::io_context &io) {
   const auto request = BuildMonitorRequest(options.monitor_period_ms);
   client.write(asio::buffer(request));
   const auto response = json::parse(ReadMessage(client));
@@ -506,24 +571,45 @@ void RunMonitor(SecureWebSocket &client, const Options &options) {
 
   SignalValues signals;
   MonitorHealth health;
-  while (true) {
-    const auto event = json::parse(ReadMessage(client));
-    if (!event.is_object()) {
-      continue;
-    }
-    const auto &object = event.as_object();
-    const auto *data = object.if_contains("data");
-    if (data != nullptr) {
-      CollectData(*data, signals);
-    }
-    std::string updated_at = "--";
-    if (const auto *timestamp = object.if_contains("ts");
-        timestamp != nullptr && timestamp->is_string()) {
-      updated_at = AsString(timestamp->as_string());
-    }
-    UpdateHealth(signals, updated_at, health);
+  std::string updated_at = "--";
+  beast::flat_buffer buffer;
+  asio::steady_timer timer(io);
+  boost::system::error_code read_error;
+  std::function<void()> read_next, render_next;
+  read_next = [&] {
+    client.async_read(buffer, [&](boost::system::error_code error, std::size_t) {
+      if (error) {
+        read_error = error;
+        timer.cancel();
+        RenderDashboard(options, signals, updated_at, health, false);
+        return;
+      }
+      const auto event = json::parse(beast::buffers_to_string(buffer.data()));
+      buffer.consume(buffer.size());
+      if (event.is_object()) {
+        const auto &object = event.as_object();
+        if (const auto *data = object.if_contains("data")) {
+          // Each subscription event is a current snapshot. Missing fields must
+          // not inherit a previous generation's mode or advisory indication.
+          signals.clear();
+          CollectData(*data, signals);
+          updated_at = "--";
+          if (const auto *timestamp = object.if_contains("ts"); timestamp && timestamp->is_string()) updated_at = AsString(timestamp->as_string());
+          UpdateHealth(signals, updated_at, health);
+        }
+      }
+      read_next();
+    });
+  };
+  render_next = [&] {
     RenderDashboard(options, signals, updated_at, health);
-  }
+    timer.expires_after(std::chrono::milliseconds(500));
+    timer.async_wait([&](boost::system::error_code error) { if (!error) render_next(); });
+  };
+  read_next();
+  render_next();
+  io.run();
+  if (read_error) throw std::runtime_error("telemetry connection closed");
 }
 
 int Run(const Options &options) {
@@ -566,7 +652,7 @@ int Run(const Options &options) {
   }
 
   if (options.monitor) {
-    RunMonitor(client, options);
+    RunMonitor(client, options, io_context);
   } else {
     client.write(asio::buffer(options.request));
     for (std::size_t index = 0; index < options.messages; ++index) {

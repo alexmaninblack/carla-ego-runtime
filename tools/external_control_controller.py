@@ -38,6 +38,12 @@ def request_stop(_signum: int, _frame: Any) -> None:
     STOP_REQUESTED = True
 
 
+def session_expired(elapsed_seconds: float, maximum_seconds: float,
+                    until_stopped: bool = False) -> bool:
+    """Interactive sessions have no duration cap; bounded runs keep theirs."""
+    return not until_stopped and elapsed_seconds > maximum_seconds
+
+
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
@@ -471,7 +477,9 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         while not STOP_REQUESTED:
             pending_facts_transition = None
             now = time.monotonic()
-            if now - started_at > float(control_config["maximum_session_seconds"]):
+            if session_expired(now - started_at,
+                               float(control_config["maximum_session_seconds"]),
+                               getattr(arguments, "until_stopped", False)):
                 completed = True
                 break
             applied = control_state.current_control(now)
@@ -941,6 +949,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--token-file", required=True, type=Path)
     parser.add_argument("--facts-socket-file", required=True, type=Path)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--until-stopped", action="store_true",
+                        help="interactive session: no duration cap; explicit stop and safety timeouts remain active")
     return parser.parse_args()
 
 

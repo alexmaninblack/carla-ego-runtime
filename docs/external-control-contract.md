@@ -1,6 +1,51 @@
 # External control contract v3
 
+## Interactive session lifetime — 2026-09-07
+
+The interactive runner used by `democtl simulation start` passes
+`--until-stopped` to its existing Controller. This disables only the total
+session-duration cap, including the former 3600-second exit. The run manifest
+records `session_lifetime: until_stopped`; the unchanged configuration's
+`maximum_session_seconds` still applies to bounded, noninteractive runs.
+Explicit stop, signal handling, command/ownership expiry, disconnect Safe Stop
+and startup/shutdown timeouts retain their existing behavior. No VM image or
+Cloud configuration change is required.
+
+## Engineering display additions — 2026-09-07
+
+The VISS monitor renders read-only drive/reset context, a shortened exercise
+fingerprint and the physical Safe Stop observation alongside existing vehicle,
+wheel/slip and GNSS telemetry. It does not evaluate the runtime-owned twelve-
+frame FOTA authorization gate. `--demo-journal` optionally supplies the existing
+Demo Control journal for a fixed Test/Production/Not assigned label; its source
+run ID must match the VISS run, and no private journal fields are displayed.
+
+Rendering continues on a 500-ms timer while the VISS read is pending. More than
+five seconds without a received/advancing frame labels all values stale and
+the physical stop state unknown. Disconnect is displayed explicitly. These
+display semantics do not change source timestamps or the runtime freshness
+policy. Driver Advisory has separate Brake and Tire rows, both explicitly
+UNAVAILABLE until the actual Gateway advisory implementation is connected.
+No request or applied advisory status is synthesized from telemetry.
+
 ## Demo Orchestrator Safe Stop and Reset
+
+### Initial stationary Manual readiness — authorized 2026-09-06
+
+The operator explicitly authorized a narrowly scoped command-timeout exception
+for initial demo readiness. `manual_ready` requires this operation's confirmed
+post-reset Safe Stop frame and an existing native operator session. It applies
+zero throttle, full brake and centered steering in Manual, keeps the driving
+interlock, then reports `MANUAL_READY` only from a real completed stationary
+Manual frame. `release_manual` requires that fresh frame before unlocking.
+Demo Control uses this only for the first Test attachment, while both source
+paths are still blocked; normal vehicle switching keeps its Safe Stop behavior.
+
+The stationary `manual_ready` command has no 250-ms actuator deadline because
+it cannot request motion. The first operator actuator command restores normal
+command expiry. Ownership timeout, disconnect, release, explicit Safe Stop and
+controller failure still stop the car. No requested mode is reported as applied
+before CARLA completes the frame, and no AosCore gate or VDP evidence is bypassed.
 
 The operator authorized this host-side extension on 2026-09-05. Protocol v3
 adds `action: "orchestrate"` on the existing private socket. Exact fields are
@@ -79,8 +124,14 @@ attribute is rejected before spawn; there is no silent compatibility fallback.
 This changes neither the tick owner nor the Safe Stop evidence thresholds.
 
 The requested protocol mode is not automatically the applied vehicle mode.
-Manual mode remains applied `SAFE_STOP` until the first valid actuator command;
-a command timeout likewise returns the applied mode to `SAFE_STOP` while the
+Ordinary Manual mode remains applied `SAFE_STOP` until the first valid actuator
+command. A separately authorized initial `manual_ready` state holds zero throttle and
+full brake while awaiting the operator. In that stationary state only, the
+native UI emits neither neutral actuator commands nor a focus-loss mode
+change. Selecting Manual or Autopilot ends UI waiting; explicit Safe Stop,
+disconnect and ownership timeout retain their normal effects. Ordinary
+manual driving retains its focus-loss stop and command deadline.
+A command timeout likewise returns the applied mode to `SAFE_STOP` while the
 session remains available for recovery. Each non-idempotent requested or
 controller-forced applied-mode transition increments the bounded control
 generation. The controller never reports a requested mode as applied before

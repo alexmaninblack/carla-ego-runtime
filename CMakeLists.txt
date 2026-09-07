@@ -188,6 +188,13 @@ if(BUILD_TESTING)
   add_test(NAME chase_camera COMMAND chase-camera-test)
 
   if(CARLA_EGO_WITH_VISS)
+    add_executable(viss-dashboard-test tests/viss_dashboard_test.cpp)
+    target_link_libraries(viss-dashboard-test PRIVATE carla-ego-runtime-viss)
+    target_include_directories(viss-dashboard-test PRIVATE "${CARLA_EGO_BOOST_INCLUDE_DIR}")
+    target_compile_options(viss-dashboard-test PRIVATE -UNDEBUG)
+    carla_ego_enable_warnings(viss-dashboard-test)
+    add_test(NAME viss_dashboard COMMAND viss-dashboard-test)
+
     add_executable(viss-protocol-test tests/viss_protocol_test.cpp)
     target_link_libraries(viss-protocol-test PRIVATE carla-ego-runtime-viss)
     target_include_directories(

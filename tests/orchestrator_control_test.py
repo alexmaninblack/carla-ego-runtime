@@ -10,6 +10,59 @@ OTHER = "031ae4e1-954f-45f4-bb67-0416f16bd431"
 
 
 class OrchestratorControlTests(unittest.TestCase):
+    def manual_ready(self):
+        session = self.state.handle(dict(version=2, action="acquire", requestId="ui",
+            token="fixture-secret", clientId="native-ui"), 1)["sessionId"]
+        self.call("safe_stop")
+        self.observe()
+        self.call("reset", at=1.11)
+        self.state.current_control(1.12)
+        self.observe(at=1.15, reset=1)
+        self.call("manual_ready", at=1.16)
+        return session
+
+    def observe_manual(self, at=1.2):
+        self.frame += 1
+        self.state.observe_completed_frame(now=at, run_id="fixture-run", ego_actor_id=1,
+            frame_id=self.frame, simulation_time=self.frame * .05, active_mode="manual",
+            control_generation=self.state.current_control(at).mode_generation,
+            reset_generation=1, speed_kmh=0, brake=1)
+
+    def test_manual_ready_requires_real_frame_before_source_release(self):
+        session = self.manual_ready()
+        with self.assertRaises(ControlProtocolError):
+            self.call("release_manual", at=1.17)
+        heartbeat = self.state.handle(dict(version=2, action="heartbeat", requestId="heartbeat", sessionId=session), 1.18)
+        self.assertTrue(heartbeat["held"])
+        self.observe_manual()
+        self.assertEqual("RELEASED", self.call("release_manual", at=1.21)["phase"])
+        control = self.state.current_control(1.6)
+        self.assertEqual("manual", control.mode)
+        self.assertEqual((0, 1, 0), (control.throttle, control.brake, control.steering))
+        self.assertFalse(control.safe_stop)
+
+    def test_first_command_restores_timeout_and_disconnect_still_stops(self):
+        session = self.manual_ready()
+        self.observe_manual()
+        self.call("release_manual", at=1.21)
+        self.state.handle(dict(version=2, action="command", requestId="drive", sessionId=session,
+            sequence=1, throttle=.1, brake=0, steering=0), 1.3)
+        self.assertTrue(self.state.current_control(1.6).safe_stop)
+        self.state.disconnect(session)
+        self.assertTrue(self.state.current_control(1.61).safe_stop)
+
+    def test_manual_ready_does_not_disable_ownership_timeout(self):
+        self.manual_ready()
+        self.observe_manual()
+        self.call("release_manual", at=1.21)
+        self.assertTrue(self.state.current_control(2.1).safe_stop)
+
+    def test_manual_ready_requires_reset_and_native_session(self):
+        self.call("safe_stop")
+        self.observe()
+        with self.assertRaises(ControlProtocolError):
+            self.call("manual_ready", at=1.11)
+
     def setUp(self):
         self.state = ExternalControlState("fixture-secret", 0.25, 1.0)
         self.frame = 0

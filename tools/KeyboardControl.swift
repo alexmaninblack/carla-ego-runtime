@@ -21,6 +21,7 @@ func jsonLine(_ event: String, fields: [String: Any] = [:]) {
 
 final class ControlView: NSView {
     var mode = "safe_stop"
+    var awaitingOperator = false
     var availableModes = Set(["safe_stop", "manual", "autopilot"])
     var connected = false
     var statusDetail = "CONNECTING..."
@@ -45,6 +46,12 @@ final class ControlView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // Keep the existing drawing and hit-test coordinates in one logical canvas.
+        setBoundsSize(NSSize(width: 520, height: 600))
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
@@ -64,7 +71,7 @@ final class ControlView: NSView {
         case 49: onMode?("safe_stop")            // Space
         case 53: onExit?()                        // Escape
         case 123, 124, 125, 126:
-            if mode == "manual" { pressed.insert(event.keyCode) }
+            if mode == "manual" && !awaitingOperator { pressed.insert(event.keyCode) }
         default: super.keyDown(with: event)
         }
     }
@@ -86,11 +93,14 @@ final class ControlView: NSView {
 
     func setMode(_ selected: String, reason: String = "") {
         mode = selected
+        awaitingOperator = selected == "manual" && reason == "manual_ready"
         pressed.removeAll()
         if selected == "manual" {
-            statusDetail = "MANUAL CONTROL — ARROWS ACTIVE"
+            statusDetail = awaitingOperator
+                ? "READY — SELECT MANUAL OR AUTOPILOT"
+                : "MANUAL CONTROL — ARROWS ACTIVE"
             throttle = 0
-            brake = 0
+            brake = awaitingOperator ? 1 : 0
             steering = 0
         } else if selected == "autopilot" {
             statusDetail = "AUTOPILOT — VEHICLE DRIVING"
@@ -154,6 +164,9 @@ final class ControlView: NSView {
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = max(0, min(now - lastUpdate, 0.25))
         lastUpdate = now
+        // The controller holds full brake until an explicit driving-mode choice.
+        // No neutral command may release that brake or end manual_ready.
+        if awaitingOperator { return }
         if mode == "manual" && !(window?.isKeyWindow ?? false) {
             onMode?("safe_stop")
             return
@@ -435,12 +448,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view = ControlView(frame: NSRect(x: 0, y: 0, width: 520, height: 600))
         window = NSWindow(
             contentRect: view.bounds,
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "CARLA — Live Driving Control"
         window.contentView = view
+        view.autoresizingMask = [.width, .height]
+        window.contentMinSize = NSSize(width: 360, height: 390)
         window.delegate = self
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
@@ -539,7 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func lostFocus() {
-        if !closing && view.mode == "manual" { selectMode("safe_stop") }
+        if !closing && view.mode == "manual" && !view.awaitingOperator { selectMode("safe_stop") }
     }
 
     func writePayload(_ payload: [String: Any]) {

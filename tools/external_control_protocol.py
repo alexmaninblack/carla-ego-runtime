@@ -390,7 +390,7 @@ class ExternalControlState:
         self._mode_generation += 1
 
     def _applied_mode(self) -> str:
-        if self._mode == "manual" and self._safe_stop_reason != "command":
+        if self._mode == "manual" and self._safe_stop_reason not in {"command", "manual_ready"}:
             return "safe_stop"
         return self._mode
 
@@ -559,6 +559,7 @@ class ExternalControlState:
                 "mode": self._applied_mode(),
                 "modeGeneration": self._mode_generation,
                 "reason": self._safe_stop_reason,
+                "held": held,
             }
 
         if action == "release":
@@ -587,7 +588,7 @@ class ExternalControlState:
                 if now - self._last_heartbeat_at > self._ownership_timeout:
                     self._metrics["ownership_timeouts"] += 1
                     self._drop_ownership("ownership_timeout")
-                elif self._mode == "manual" and (
+                elif self._mode == "manual" and self._safe_stop_reason != "manual_ready" and (
                     self._last_command_at is None
                     or now - self._last_command_at > self._command_timeout
                 ):
@@ -602,7 +603,7 @@ class ExternalControlState:
                 sequence=self._last_sequence,
                 safe_stop=(
                     self._mode == "safe_stop"
-                    or (self._mode == "manual" and self._safe_stop_reason != "command")
+                    or (self._mode == "manual" and self._safe_stop_reason not in {"command", "manual_ready"})
                 ),
                 reason=self._safe_stop_reason,
                 mode=self._applied_mode(),
@@ -651,23 +652,41 @@ class ExternalControlState:
             self._select_safe_stop("orchestrator")
             self._orchestration = {"id": operation_id, "held": True, "phase": "STOPPING"}
             return self._orchestration_status_locked(now)
-        if action not in {"reset", "release"}:
+        if action not in {"reset", "release", "manual_ready", "release_manual"}:
             raise ControlProtocolError("bad_request", "unsupported orchestration operation")
         if not current or current["id"] != operation_id:
             raise ControlProtocolError("orchestration_mismatch", "operation does not own safe stop")
-        if action == "release" and not current["held"]:
+        if action in {"release", "release_manual"} and not current["held"]:
             return self._orchestration_status_locked(now)
         if not current["held"]:
             raise ControlProtocolError("orchestration_mismatch", "operation already released")
         if action == "reset" and current["phase"] in {"RESETTING", "RESET"}:
             return self._orchestration_status_locked(now)
+        if action == "manual_ready" and current["phase"] in {"MANUAL_PREPARING", "MANUAL_READY"}:
+            return self._orchestration_status_locked(now)
         result = self._orchestration_status_locked(now)
         frame = result["frame"]
+        if action == "release_manual":
+            if (current["phase"] != "MANUAL_READY" or not result["fresh"] or not self._session_id
+                    or not frame or frame["activeMode"] != "MANUAL" or frame["speedKmh"] > .5
+                    or frame["brake"] < .99 or frame["controlGeneration"] != self._mode_generation):
+                raise ControlProtocolError("manual_ready_not_confirmed", "completed stationary manual frame and native operator session required")
+            current.update(held=False, phase="RELEASED")
+            return self._orchestration_status_locked(now)
         if (current["phase"] not in {"SAFE_STOP", "RESET"} or not result["fresh"] or
                 not frame or frame["activeMode"] != "SAFE_STOP" or frame["speedKmh"] > 0.5 or
                 frame["brake"] < 0.99 or frame["controlGeneration"] != self._mode_generation):
             raise ControlProtocolError("safe_stop_not_confirmed", "completed stopped frame is required")
-        if action == "reset":
+        if action == "manual_ready":
+            if current["phase"] != "RESET" or not self._session_id:
+                raise ControlProtocolError("manual_ready_not_confirmed", "post-reset frame and native operator session required")
+            self._mode = "manual"
+            self._advance_mode_generation()
+            self._command = dict(SAFE_CONTROL)
+            self._last_command_at = None
+            self._safe_stop_reason = "manual_ready"
+            current.update(phase="MANUAL_PREPARING")
+        elif action == "reset":
             if not self._orchestration_reset_supported:
                 raise ControlProtocolError("reset_unavailable", "standalone reset is unavailable for this scene")
             if frame["resetGeneration"] == (1 << 64) - 1:
@@ -697,6 +716,10 @@ class ExternalControlState:
                 "speedKmh": speed_kmh, "brake": brake}
             self._completed_at = now
             current = self._orchestration
+            if (current and current["held"] and current["phase"] == "MANUAL_PREPARING"
+                    and active_mode == "manual" and self._safe_stop_reason == "manual_ready"
+                    and control_generation == self._mode_generation and speed_kmh <= .5 and brake >= .99):
+                current["phase"] = "MANUAL_READY"
             stopped = (active_mode == "safe_stop" and control_generation == self._mode_generation
                        and speed_kmh <= 0.5 and brake >= 0.99)
             if current and current["held"] and stopped:

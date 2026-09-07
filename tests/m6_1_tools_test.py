@@ -31,6 +31,14 @@ M6_RUNNER = load_module("m6_acceptance_tested", REPOSITORY / "tools" / "run_m6.p
 
 
 class M61ToolTests(unittest.TestCase):
+    def test_stationary_manual_ready_does_not_emit_focus_stop_or_neutral_commands(self):
+        source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
+        self.assertIn('awaitingOperator = selected == "manual" && reason == "manual_ready"', source)
+        self.assertIn('brake = awaitingOperator ? 1 : 0', source)
+        self.assertLess(source.index('if awaitingOperator { return }'), source.index('if mode == "manual" && !(window?'))
+        self.assertIn('view.mode == "manual" && !view.awaitingOperator', source)
+        self.assertIn('mode == "manual" && !awaitingOperator { pressed.insert', source)
+
     def test_keyboard_directions_are_arranged_as_a_cross(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
 
@@ -123,7 +131,7 @@ class M61ToolTests(unittest.TestCase):
             REPOSITORY / "tools" / "keyboard_control_bridge.py"
         ).read_text(encoding="utf-8")
         self.assertIn('current_mode = "safe_stop"', source)
-        self.assertIn('elif current_mode == "manual":', source)
+        self.assertIn('elif current_mode == "manual" and not orchestration_held:', source)
         self.assertIn("protocol_version=3", source)
         self.assertIn('server_mode != current_mode', source)
 

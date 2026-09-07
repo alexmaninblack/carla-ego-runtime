@@ -142,6 +142,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         str(token_file),
         "--facts-socket-file", str(facts_socket_file),
         "--run-id", run_id,
+        "--until-stopped",
     ]
     runtime_command = M5.runtime_command(
         arguments.runtime,
@@ -165,6 +166,7 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
             else "live_manual_autopilot_handover"
         ),
         "configuration": config,
+        "session_lifetime": "until_stopped",
         "runtime_command": M5.public_runtime_options(runtime_command),
         "artifacts": {
             "events": "events.jsonl",
@@ -224,9 +226,12 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         timeline_mark(timeline_file, started_at, "viss_verified")
 
         print("[4/6] Opening the live VSS dashboard in this terminal...", flush=True)
+        dashboard_command = M5.dashboard_command(arguments.viss_client, config, arguments.certificate)
+        if arguments.demo_journal:
+            dashboard_command.extend(["--demo-journal", str(arguments.demo_journal)])
         dashboard = M5.CapturedProcess(
             "dashboard",
-            M5.dashboard_command(arguments.viss_client, config, arguments.certificate),
+            dashboard_command,
             log,
             "Connection        CONNECTED",
             echo=True,
@@ -356,6 +361,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--keyboard-ui", required=True, type=Path)
     parser.add_argument("--run-directory", required=True, type=Path)
     parser.add_argument("--control-directory", required=True, type=Path)
+    parser.add_argument("--demo-journal", type=Path, help="read-only existing Demo Control journal for audience context")
     parser.add_argument("--started-timestamp", required=True, type=float)
     parser.add_argument("--viss-development", action="store_true",
                         help="explicit local server-TLS profile; no client mTLS")

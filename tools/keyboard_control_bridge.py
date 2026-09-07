@@ -47,6 +47,7 @@ def main() -> int:
         next_heartbeat = time.monotonic() + 0.2
         exiting = False
         current_mode = "safe_stop"
+        orchestration_held = False
         while not exiting:
             timeout = max(0.0, next_heartbeat - time.monotonic())
             events = selector.select(timeout)
@@ -68,7 +69,7 @@ def main() -> int:
                     connection.set_mode("safe_stop")
                     current_mode = "safe_stop"
                     exiting = True
-                elif current_mode == "manual":
+                elif current_mode == "manual" and not orchestration_held:
                     connection.command(
                         float(value["throttle"]),
                         float(value["brake"]),
@@ -76,6 +77,7 @@ def main() -> int:
                     )
             if time.monotonic() >= next_heartbeat and not exiting:
                 heartbeat = connection.heartbeat()
+                orchestration_held = heartbeat.get("held") is True
                 server_mode = str(heartbeat.get("mode", current_mode))
                 if server_mode != current_mode:
                     current_mode = server_mode
