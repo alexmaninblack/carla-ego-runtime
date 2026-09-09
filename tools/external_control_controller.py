@@ -972,7 +972,15 @@ def main() -> int:
         OSError,
         InterruptedError,
     ) as error:
-        emit("external_controller_failed", error=str(error))
+        # Native CARLA exceptions may contain only "std::exception". Report
+        # the owned call-site line, never locals, arguments or a raw traceback.
+        cursor = error.__traceback__
+        failure_line = None
+        while cursor is not None:
+            if cursor.tb_frame.f_code is run_controller.__code__:
+                failure_line = cursor.tb_lineno
+            cursor = cursor.tb_next
+        emit("external_controller_failed", error=str(error), controller_line=failure_line)
         return 2
 
 

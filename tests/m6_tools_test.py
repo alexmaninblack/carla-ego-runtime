@@ -24,6 +24,18 @@ CONTROLLER = load_module(
 
 
 class M6ControllerFactsToolsTests(unittest.TestCase):
+    def test_native_failure_reports_owned_line_without_frame_locals(self):
+        def fail(*args):
+            private_fixture = "must-not-be-reported"
+            raise RuntimeError("std::exception")
+        with mock.patch.object(CONTROLLER, "parse_arguments"), mock.patch.object(
+                CONTROLLER.M5, "load_config", return_value={"controller": {"type": "external_control"}}), mock.patch.object(
+                CONTROLLER, "run_controller", fail), mock.patch.object(CONTROLLER, "emit") as emit:
+            self.assertEqual(2, CONTROLLER.main())
+        self.assertEqual("external_controller_failed", emit.call_args.args[0])
+        self.assertIsInstance(emit.call_args.kwargs["controller_line"], int)
+        self.assertNotIn("must-not-be-reported", str(emit.call_args))
+
     def test_interactive_session_survives_hour_boundary_and_explicit_stop_remains(self):
         for elapsed in (0, 3599, 3600, 3600.037, 86401, 604800):
             self.assertFalse(CONTROLLER.session_expired(elapsed, 3600, True))
