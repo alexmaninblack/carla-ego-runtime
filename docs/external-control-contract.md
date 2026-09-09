@@ -1,5 +1,65 @@
 # External control contract v3
 
+## Native telemetry development slice — 2026-09-07
+
+The operator authorized combining Driving Control and telemetry, followed by
+an immediate live democtl trial; broad qualification and publication are deferred.
+`carla-viss-client --monitor-json` emits one schemaVersion=1 UTF-8 JSON line
+every 500 ms, at most 64 KiB, with source=gateway-viss, connection/state,
+existing vehicle/exercise/physical-stop projections, metric text, advisory
+availability and up to 128 bounded signal entries. No credentials enter samples.
+The native Control application owns that single read-only child and consumes
+its stdout pipe without recording samples. Terminal `--monitor` is retained.
+The native display additionally expires its input after five seconds and
+marks child exit disconnected. Neither condition changes vehicle commands.
+Control ownership/focus/Safe Stop semantics remain on the existing bridge.
+The runner no longer needs a Terminal or a second dashboard process. CARLA,
+VM and Cloud interfaces are unchanged. This is not complete advisory support.
+
+The in-car native dashboard presents vehicle telemetry only. Its drive mode is
+the observed ActiveMode, while MOVING / STOPPING / STOPPED describes physical
+movement (STOPPED at absolute speed <= 0.3 km/h). Missing/non-finite speed or a
+reset reports MOTION UNKNOWN; stale/disconnected input reports NO FRESH DATA.
+STOPPING requires observed SAFE_STOP with speed above that threshold. The
+native display does not consume the engineering `stop` projection or show
+platform terminology, installation state or update permission. AosCore's
+authorization gate and the separate Cloud-only Platform Team view are unchanged.
+
+### Fixed telemetry pages — accepted 2026-09-07
+
+The native telemetry area uses Dashboard / Vehicle / Data pages, replacing the
+expanding Engineering details section. Changing pages never resizes the window
+or creates scrolling. Selected vehicle, freshness, speed and observed drive/motion
+state remain visible on every page. Dashboard shows pedals and the two advisory
+availability rows without duplicate footnotes. Vehicle groups steering, gear,
+RPM and four wheel speeds around a top-view schematic. Data groups stream
+metrics, coordinates, session/generation and the last event timestamp in UTC.
+
+Telemetry draws in actual screen points, not the old scaled 620x600 canvas.
+The combined window's minimum content size is 900x470; the existing composed
+914-pixel-wide window still fits. Native segmented controls expose the page
+choices to accessibility and return driving keyboard focus after selection.
+The Control side, source transport, data freshness rules and Safe Stop behavior
+are unchanged. Only the native UI target needs recompilation for this change.
+
+## Selected-vehicle external connectivity — 2026-09-07
+
+Driving Control has one disconnect/reconnect button outside the telemetry
+area. The interactive runner accepts an optional trusted
+`--connectivity-command` JSON argv prefix supplied by Demo Control; native
+Control receives it as its fourth process argument. It invokes the fixed
+`status`, `off`, or `on --target test|production` suffix without a shell.
+Target comes from the latest successful status, not an independent selector.
+
+Network policy and ownership belong to Demo Control, not to the native app.
+ON/OFF reports that owned filter setting, not Aos Cloud reachability. Status
+is read asynchronously every five seconds with bounded output/deadline;
+unavailable/expired input shows UNKNOWN or triggers a read before mutation.
+One child operation runs at a time; control/telemetry processing is separate.
+Closing waits for the in-flight operation but does not reconnect the VM.
+The explicit CLI restore works even after simulation stop. No network state
+is added to the in-car telemetry or its VISS contract.
+
 ## Interactive session lifetime — 2026-09-07
 
 The interactive runner used by `democtl simulation start` passes

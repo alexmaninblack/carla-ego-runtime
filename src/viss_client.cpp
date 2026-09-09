@@ -51,6 +51,7 @@ struct Options {
   std::size_t messages = 1;
   std::uint32_t monitor_period_ms = 250;
   bool monitor = false;
+  bool monitor_json = false;
   std::string demo_journal;
 };
 
@@ -70,6 +71,7 @@ Options:
       --request JSON        One VISS request to send
       --messages N          Number of raw responses/events to read (default: 1)
       --monitor             Show the live basic-telemetry dashboard until Ctrl-C
+      --monitor-json        Emit bounded JSON snapshots for the native dashboard
       --monitor-period-ms N Dashboard refresh period (default: 250)
       --demo-journal FILE   Owned demo journal for the selected-vehicle label
 )";
@@ -121,6 +123,9 @@ Options Parse(const std::vector<std::string> &arguments) {
           RequireValue(arguments, index), "--messages");
     } else if (argument == "--monitor") {
       options.monitor = true;
+    } else if (argument == "--monitor-json") {
+      options.monitor = true;
+      options.monitor_json = true;
     } else if (argument == "--monitor-period-ms") {
       options.monitor_period_ms = ParseUnsigned<std::uint32_t>(
           RequireValue(arguments, index), "--monitor-period-ms");
@@ -437,6 +442,27 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
                      std::string_view updated_at,
                      const MonitorHealth &health, bool connected = true) {
   const bool live = connected && DashboardLive(options, health);
+  if (options.monitor_json) {
+    json::object values;
+    for (const auto &[path, value] : signals) {
+      if (values.size() >= 128) break;
+      if (path.size() <= 192 && value.size() <= 256) values[path] = value;
+    }
+    const json::object record{
+      {"schemaVersion", 1}, {"source", "gateway-viss"},
+      {"connection", connected ? health.event_count ? "CONNECTED" : "WAITING" : "DISCONNECTED"},
+      {"state", !connected ? "DISCONNECTED" : live ? "LIVE" : health.event_count ? "STALE" : "WAITING"},
+      {"vehicle", VehicleLabel(options, signals)}, {"exercise", ShortExercise(signals)},
+      {"stop", StopObservation(signals, live)}, {"updatedAt", std::string(updated_at.substr(0, 64))},
+      {"metrics", json::object{{"simulation", MetricText(health.simulation_hz, 1, " Hz")},
+        {"delivery", MetricText(health.delivery_hz, 1, " events/s")},
+        {"latency", MetricText(health.event_latency_ms, 1, " ms")}}},
+      {"advisory", json::object{{"brake", "UNAVAILABLE"}, {"tire", "UNAVAILABLE"}}},
+      {"signals", std::move(values)}};
+    const auto output = json::serialize(record);
+    if (output.size() <= 65535) std::cout << output << '\n' << std::flush;
+    return;
+  }
   std::cout
       << "\033[2J\033[H"
       << "CARLA / VSS LIVE TELEMETRY\n"

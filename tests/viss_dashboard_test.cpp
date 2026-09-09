@@ -45,5 +45,17 @@ int main() {
   assert(rendered.str().find("DRIVER ADVISORY") != std::string::npos);
   assert(rendered.str().find("Brake             UNAVAILABLE") != std::string::npos);
   assert(rendered.str().find("Tire              UNAVAILABLE") != std::string::npos);
+  options.monitor_json = true;
+  std::ostringstream native;
+  previous = std::cout.rdbuf(native.rdbuf());
+  RenderDashboard(options, signals, "now", health, false);
+  std::cout.rdbuf(previous);
+  const auto snapshot = json::parse(native.str()).as_object();
+  assert(snapshot.at("schemaVersion").as_int64() == 1);
+  assert(snapshot.at("state").as_string() == "DISCONNECTED");
+  assert(snapshot.at("advisory").as_object().at("brake").as_string() == "UNAVAILABLE");
+  assert(snapshot.at("stop").as_string() == "UNKNOWN (stale telemetry)");
+  assert(native.str().size() < 65536 && native.str().find('\033') == std::string::npos);
+  assert(Parse({"--ca", "fixture", "--monitor-json"}).monitor_json);
   std::cout << "Dashboard freshness, stop evidence and unavailable advisory: PASS\n";
 }

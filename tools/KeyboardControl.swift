@@ -32,6 +32,13 @@ final class ControlView: NSView {
     var onControl: ((Control) -> Void)?
     var onMode: ((String) -> Void)?
     var onExit: (() -> Void)?
+    var onConnectivity: (() -> Void)?
+    var externalState = "UNKNOWN"
+    var externalBusy = false
+    private var connectivityRect: NSRect {
+        NSRect(x: 18, y: availableModes.contains("scenario") ? 152 : 112,
+               width: 484, height: availableModes.contains("scenario") ? 30 : 48)
+    }
     private var lastUpdate = ProcessInfo.processInfo.systemUptime
 
     private let statusRect = NSRect(x: 24, y: 526, width: 472, height: 52)
@@ -205,6 +212,8 @@ final class ControlView: NSView {
             onMode?("safe_stop")
         } else if availableModes.contains("scenario") && scenarioButtonRect.contains(point) {
             onMode?("scenario")
+        } else if onConnectivity != nil && !externalBusy && connectivityRect.contains(point) {
+            onConnectivity?()
         }
     }
 
@@ -392,6 +401,19 @@ final class ControlView: NSView {
             alignment: .center
         )
 
+        if onConnectivity != nil {
+            let title = externalBusy ? "EXTERNAL NETWORK · CHANGING…" :
+                externalState == "ON" ? "EXTERNAL NETWORK: ON · DISCONNECT" :
+                externalState == "OFF" ? "EXTERNAL NETWORK: OFF · RECONNECT" :
+                externalState == "NO_VEHICLE" ? "EXTERNAL NETWORK · SELECT A VEHICLE" :
+                "EXTERNAL NETWORK: UNKNOWN · CHECK"
+            let offline = externalState == "OFF"
+            roundedCard(connectivityRect,
+                fill: offline ? NSColor(calibratedRed: 1, green: 0.9, blue: 0.75, alpha: 1) : NSColor(calibratedWhite: 0.91, alpha: 1),
+                border: offline ? .systemOrange : .gray, lineWidth: 1.5)
+            centeredText(title, in: connectivityRect, size: 14, color: .black, bold: true)
+        }
+
         if availableModes.contains("scenario") {
             actionButton(
                 mode == "scenario" ? "RESTART SCRIPTED SCENARIO" : "START SCRIPTED SCENARIO",
@@ -430,6 +452,234 @@ final class ControlView: NSView {
     }
 }
 
+final class TelemetryView: NSView {
+    var sample: [String: Any] = [:]
+    var receivedAt: TimeInterval = 0
+    var disconnected = false
+    private let tabs = NSSegmentedControl()
+    private var selectedPage = 0
+    var onPageSelected: (() -> Void)?
+    private var lastState = ""
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { false }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        tabs.segmentCount = 3
+        for (index, title) in ["Dashboard", "Vehicle", "Data"].enumerated() {
+            tabs.setLabel(title, forSegment: index)
+        }
+        tabs.selectedSegment = 0
+        tabs.trackingMode = .selectOne
+        tabs.segmentStyle = .rounded
+        tabs.appearance = NSAppearance(named: .darkAqua)
+        tabs.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        tabs.target = self
+        tabs.action = #selector(selectPage(_:))
+        tabs.setAccessibilityLabel("Telemetry sections")
+        addSubview(tabs)
+        layoutTabs()
+    }
+    required init?(coder: NSCoder) { fatalError("Not supported") }
+    private func layoutTabs() {
+        let width = max(0, bounds.width - 40)
+        tabs.frame = NSRect(x: 20, y: 50, width: width, height: 36)
+        for index in 0..<3 { tabs.setWidth(max(0, (width - 6) / 3), forSegment: index) }
+    }
+    @objc private func selectPage(_ sender: NSSegmentedControl) {
+        selectedPage = sender.selectedSegment
+        needsDisplay = true
+        // Keep driving shortcuts with the controller after changing a display tab.
+        onPageSelected?()
+    }
+
+    var dataState: String {
+        if disconnected { return "DISCONNECTED" }
+        if receivedAt == 0 { return "WAITING" }
+        if ProcessInfo.processInfo.systemUptime - receivedAt > 5 { return "STALE" }
+        return sample["state"] as? String ?? "WAITING"
+    }
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        setBoundsSize(size)
+        layoutTabs()
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let state = self.dataState
+            if state != self.lastState {
+                self.lastState = state
+                jsonLine("telemetry_display_state", fields: ["state": state])
+            }
+            self.needsDisplay = true
+        }
+    }
+    func accept(_ value: [String: Any]) {
+        guard value["schemaVersion"] as? Int == 1,
+              value["source"] as? String == "gateway-viss",
+              let state = value["state"] as? String,
+              ["WAITING", "LIVE", "STALE", "DISCONNECTED"].contains(state),
+              let signals = value["signals"] as? [String: String], signals.count <= 128
+        else { return }
+        sample = value
+        receivedAt = ProcessInfo.processInfo.systemUptime
+        disconnected = state == "DISCONNECTED"
+        needsDisplay = true
+    }
+    private func text(_ value: String, _ x: CGFloat, _ y: CGFloat, _ size: CGFloat = 16,
+                      _ color: NSColor = .white, width: CGFloat = 550, bold: Bool = false,
+                      alignment: NSTextAlignment = .left) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.alignment = alignment
+        value.draw(in: NSRect(x: x, y: y, width: width, height: size * 1.6),
+                   withAttributes: [.font: bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular),
+                                    .foregroundColor: color, .paragraphStyle: paragraph])
+    }
+    private func value(_ path: String, _ precision: Int = 1) -> String {
+        guard let raw = (sample["signals"] as? [String: String])?["Vehicle." + path],
+              let number = Double(raw), number.isFinite else { return "—" }
+        return String(format: "%.*f", precision, number)
+    }
+    private var motionText: String {
+        guard dataState == "LIVE" else { return "NO FRESH DATA" }
+        let signals = sample["signals"] as? [String: String] ?? [:]
+        guard let raw = signals["Vehicle.Speed"], let speed = Double(raw), speed.isFinite,
+              signals["Vehicle.CarlaSimulation.Reset.InProgress"] != "true",
+              signals["Vehicle.CarlaSimulation.Reset.Discontinuity"] != "true"
+        else { return "MOTION UNKNOWN" }
+        // Physical movement only; no update permission or platform state is inferred.
+        if abs(speed) <= 0.3 { return "STOPPED" }
+        return signals["Vehicle.CarlaSimulation.Control.ActiveMode"] == "SAFE_STOP"
+            ? "STOPPING" : "MOVING"
+    }
+    private func pedal(_ title: String, _ path: String, _ y: CGFloat, _ color: NSColor) {
+        let signals = sample["signals"] as? [String: String] ?? [:]
+        let raw = Double(signals["Vehicle." + path] ?? "")
+        let ink: NSColor = dataState == "LIVE" ? .white : .gray
+        text(title, 20, y, 15, .lightGray, width: 110)
+        let track = NSRect(x: 132, y: y + 6, width: max(0, bounds.width - 210), height: 10)
+        NSColor(calibratedWhite: 0.24, alpha: 1).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 5, yRadius: 5).fill()
+        if let raw = raw, raw.isFinite {
+            (dataState == "LIVE" ? color : NSColor.gray).setFill()
+            NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY,
+                width: track.width * CGFloat(min(100, max(0, raw))) / 100, height: track.height), xRadius: 5, yRadius: 5).fill()
+        }
+        let amount = value(path, 0)
+        text(amount == "—" ? amount : amount + "%", bounds.width - 70, y, 16, ink, width: 50, alignment: .right)
+    }
+    private func separator(_ y: CGFloat) {
+        NSColor(calibratedWhite: 0.23, alpha: 1).setFill()
+        NSRect(x: 20, y: y, width: max(0, bounds.width - 40), height: 1).fill()
+    }
+    private func metric(_ title: String, _ amount: String, _ index: Int, _ ink: NSColor) {
+        let width = (bounds.width - 64) / 3
+        let x = 20 + CGFloat(index) * (width + 12)
+        text(title, x, 170, 14, .lightGray, width: width)
+        text(amount, x, 196, 20, ink, width: width, bold: true)
+    }
+    private func dataRow(_ title: String, _ amount: String, _ y: CGFloat, _ ink: NSColor) {
+        text(title, 20, y, 14, .lightGray, width: 142)
+        text(amount, 166, y, 15, ink, width: bounds.width - 186, alignment: .right)
+    }
+    private func drawVehicle(_ ink: NSColor) {
+        let steering = value("Chassis.Axle.Row1.SteeringAngle")
+        let rpm = value("Powertrain.CombustionEngine.Speed", 0)
+        metric("Steering", steering == "—" ? steering : steering + "°", 0, ink)
+        metric("Gear", value("Powertrain.Transmission.CurrentGear", 0), 1, ink)
+        metric("Engine", rpm == "—" ? rpm : rpm + " RPM", 2, ink)
+        text("Wheel speed", 20, 234, 15, .white, width: 180)
+        text("km/h", bounds.width - 90, 234, 14, .lightGray, width: 70, alignment: .right)
+        let area = NSRect(x: 20, y: 264, width: bounds.width - 40, height: max(140, bounds.height - 284))
+        NSColor(calibratedRed: 0.105, green: 0.15, blue: 0.195, alpha: 1).setFill()
+        NSBezierPath(roundedRect: area, xRadius: 12, yRadius: 12).fill()
+        let car = NSRect(x: area.midX - 41, y: area.minY + 12, width: 82, height: area.height - 24)
+        let line = NSColor(calibratedRed: 0.27, green: 0.35, blue: 0.42, alpha: 1)
+        line.setStroke()
+        let outline = NSBezierPath(roundedRect: car, xRadius: 20, yRadius: 20)
+        outline.lineWidth = 2
+        outline.stroke()
+        line.setFill()
+        NSBezierPath(roundedRect: NSRect(x: car.minX + 14, y: car.minY + 14, width: 54, height: 23), xRadius: 6, yRadius: 6).fill()
+        NSBezierPath(roundedRect: NSRect(x: car.minX + 14, y: car.maxY - 27, width: 54, height: 11), xRadius: 3, yRadius: 3).fill()
+        text("↑", car.minX, car.midY - 12, 20, .lightGray, width: car.width, alignment: .center)
+        let column = (area.width - 106) / 2
+        let wheels = [("Front left", "Row1.Wheel.Left"), ("Front right", "Row1.Wheel.Right"),
+                      ("Rear left", "Row2.Wheel.Left"), ("Rear right", "Row2.Wheel.Right")]
+        for (index, wheel) in wheels.enumerated() {
+            let x = index % 2 == 0 ? area.minX : area.midX + 53
+            let y = area.minY + CGFloat(index / 2) * area.height / 2 + (area.height / 2 - 54) / 2
+            text(wheel.0, x, y, 14, .lightGray, width: column, alignment: .center)
+            text(value("Chassis.Axle." + wheel.1 + ".Speed"), x, y + 24, 22, ink, width: column, bold: true, alignment: .center)
+        }
+    }
+    private func drawData(_ ink: NSColor) {
+        let metrics = sample["metrics"] as? [String: String] ?? [:]
+        metric("Simulation", metrics["simulation"] ?? "—", 0, ink)
+        metric("Received", metrics["delivery"] ?? "—", 1, ink)
+        metric("Latency", metrics["latency"] ?? "—", 2, ink)
+        separator(234)
+        dataRow("Latitude", value("CurrentLocation.Latitude", 5), 252, ink)
+        dataRow("Longitude", value("CurrentLocation.Longitude", 5), 288, ink)
+        let exercise = sample["exercise"] as? String ?? "—"
+        dataRow("Session", exercise.components(separatedBy: " / ").first ?? "—", 324, ink)
+        dataRow("Generation", value("CarlaSimulation.Reset.Generation", 0), 360, ink)
+        let updated = (sample["updatedAt"] as? String ?? "—").replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: "Z", with: "")
+        dataRow("Last event · UTC", updated, 396, ink)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(calibratedRed: 0.065, green: 0.085, blue: 0.11, alpha: 1).setFill()
+        bounds.fill()
+        let live = dataState == "LIVE"
+        let accent = live ? NSColor.systemGreen : NSColor.systemOrange
+        let ink: NSColor = live ? .white : .gray
+        text(sample["vehicle"] as? String ?? "Waiting for vehicle", 20, 18, 16, .white, width: bounds.width - 162)
+        text(dataState, bounds.width - 142, 18, 14, accent, width: 122, bold: true, alignment: .right)
+        text(value("Speed"), 20, 105, 30, ink, width: 120, bold: true)
+        text("km/h", 145, 119, 14, .lightGray, width: 60)
+        let mode = (sample["signals"] as? [String: String])?["Vehicle.CarlaSimulation.Control.ActiveMode"] ?? "UNKNOWN"
+        text(live ? mode.replacingOccurrences(of: "_", with: " ") : "MODE UNKNOWN", 224, 103, 16, ink, width: bounds.width - 244, alignment: .right)
+        text(motionText, 224, 128, 14, ink, width: bounds.width - 244, alignment: .right)
+        separator(156)
+        if selectedPage == 1 {
+            drawVehicle(ink)
+        } else if selectedPage == 2 {
+            drawData(ink)
+        } else {
+            pedal("Accelerator", "Chassis.Accelerator.PedalPosition", 182, .systemGreen)
+            pedal("Brake", "Chassis.Brake.PedalPosition", 222, .systemRed)
+            separator(265)
+            text("DRIVER ADVISORY", 20, 286, 17, .white, bold: true)
+            dataRow("Brake", "Unavailable", 329, .systemOrange)
+            dataRow("Tire", "Unavailable", 371, .systemOrange)
+        }
+    }
+}
+
+final class DrivingWorkspace: NSView {
+    let control = ControlView(frame: .zero)
+    let telemetry = TelemetryView(frame: .zero)
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        addSubview(control)
+        addSubview(telemetry)
+        telemetry.onPageSelected = { [weak self] in
+            guard let self = self else { return }
+            self.window?.makeFirstResponder(self.control)
+        }
+        resizeSubviews(withOldSize: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("Not supported") }
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        let left = bounds.width * 0.44
+        control.frame = NSRect(x: 0, y: 0, width: left, height: bounds.height)
+        telemetry.frame = NSRect(x: left, y: 0, width: bounds.width - left, height: bounds.height)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let command: String
     var process: Process?
@@ -440,22 +690,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow!
     var closing = false
     var signalSources: [DispatchSourceSignal] = []
+    let telemetryCommand: [String]
+    var telemetryProcess: Process?
+    var telemetryOutput: FileHandle?
+    var telemetryBuffer = Data()
+    var telemetryView: TelemetryView?
+    let connectivityCommand: [String]
+    var connectivityProcess: Process?
+    var connectivityAction = "status"
+    var connectivityTarget: String?
+    var connectivityReadAt: TimeInterval = 0
 
-    init(command: String) { self.command = command }
+    init(command: String, telemetryCommand: [String] = [], connectivityCommand: [String] = []) {
+        self.command = command
+        self.telemetryCommand = telemetryCommand
+        self.connectivityCommand = connectivityCommand
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        view = ControlView(frame: NSRect(x: 0, y: 0, width: 520, height: 600))
+        let combined = !telemetryCommand.isEmpty
+        let content: NSView
+        if combined {
+            let workspace = DrivingWorkspace(frame: NSRect(x: 0, y: 0, width: 1040, height: 600))
+            view = workspace.control
+            telemetryView = workspace.telemetry
+            content = workspace
+        } else {
+            view = ControlView(frame: NSRect(x: 0, y: 0, width: 520, height: 600))
+            content = view
+        }
         window = NSWindow(
-            contentRect: view.bounds,
+            contentRect: content.frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "CARLA — Live Driving Control"
-        window.contentView = view
-        view.autoresizingMask = [.width, .height]
-        window.contentMinSize = NSSize(width: 360, height: 390)
+        window.title = combined ? "CARLA — Driving Control & Telemetry" : "CARLA — Live Driving Control"
+        window.contentView = content
+        content.autoresizingMask = [.width, .height]
+        window.contentMinSize = combined ? NSSize(width: 900, height: 470) : NSSize(width: 360, height: 390)
         window.delegate = self
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
@@ -464,6 +738,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.onControl = { [weak self] control in self?.send(control) }
         view.onMode = { [weak self] mode in self?.selectMode(mode) }
         view.onExit = { [weak self] in self?.finish() }
+        if !connectivityCommand.isEmpty {
+            view.onConnectivity = { [weak self] in self?.toggleConnectivity() }
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(lostFocus),
@@ -480,7 +757,140 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         startBridge()
+        startTelemetry()
+        if !connectivityCommand.isEmpty {
+            requestConnectivity("status")
+            Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                self?.requestConnectivity("status")
+            }
+        }
         jsonLine("keyboard_ui_ready", fields: ["state": "safe_stop"])
+    }
+
+    func toggleConnectivity() {
+        let fresh = ProcessInfo.processInfo.systemUptime - connectivityReadAt <= 15
+        let action = !fresh ? "status" : view.externalState == "ON" ? "off" : view.externalState == "OFF" ? "on" : "status"
+        requestConnectivity(action)
+    }
+
+    func requestConnectivity(_ action: String) {
+        guard !closing, let executable = connectivityCommand.first else { return }
+        if let running = connectivityProcess {
+            guard action != "status", connectivityAction == "status" else { return }
+            if running.isRunning { running.terminate() }
+            connectivityProcess = nil
+        }
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = Array(connectivityCommand.dropFirst()) + [action]
+        if action != "status" {
+            guard let target = connectivityTarget, ["test", "production"].contains(target) else { return }
+            task.arguments! += ["--target", target]
+        }
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        task.standardInput = FileHandle.nullDevice
+        connectivityProcess = task
+        connectivityAction = action
+        view.externalBusy = action != "status"
+        do { try task.run() } catch {
+            connectivityProcess = nil
+            view.externalState = "UNKNOWN"
+            view.externalBusy = false
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak task] in
+            guard let self = self, let task = task, self.connectivityProcess === task, task.isRunning else { return }
+            task.terminate()
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var data = Data()
+            while let chunk = try? pipe.fileHandleForReading.read(upToCount: 8192), !chunk.isEmpty {
+                if data.count + chunk.count <= 65536 { data.append(chunk) }
+                else { if task.isRunning { task.terminate() }; data.removeAll(); break }
+            }
+            task.waitUntilExit()
+            let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            DispatchQueue.main.async {
+                guard let self = self, self.connectivityProcess === task else { return }
+                self.connectivityProcess = nil
+                self.view.externalBusy = false
+                if task.terminationStatus == 0,
+                   let facts = result?["data"] as? [String: Any],
+                   let state = facts["state"] as? String, ["ON", "OFF"].contains(state),
+                   let target = facts["target"] as? String, ["test", "production"].contains(target) {
+                    self.view.externalState = state
+                    self.connectivityTarget = target
+                    self.connectivityReadAt = ProcessInfo.processInfo.systemUptime
+                } else {
+                    self.view.externalState = result?["message"] as? String == "EXTERNAL_LINK_CURRENT_VEHICLE_REQUIRED" ? "NO_VEHICLE" : "UNKNOWN"
+                    self.connectivityTarget = nil
+                }
+                self.view.needsDisplay = true
+                self.completeCloseIfReady()
+            }
+        }
+    }
+
+    func startTelemetry() {
+        guard let executable = telemetryCommand.first else { return }
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = Array(telemetryCommand.dropFirst())
+        task.standardInput = FileHandle.nullDevice
+        task.standardOutput = pipe
+        // Data and unrestricted transport errors must not enter session logs.
+        task.standardError = FileHandle.nullDevice
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            DispatchQueue.main.async { self?.consumeTelemetry(data) }
+        }
+        task.terminationHandler = { [weak self] task in
+            DispatchQueue.main.async {
+                guard let self = self, self.telemetryProcess === task else { return }
+                self.telemetryOutput?.readabilityHandler = nil
+                self.telemetryOutput = nil
+                self.telemetryProcess = nil
+                self.telemetryView?.disconnected = true
+                self.telemetryView?.needsDisplay = true
+                self.completeCloseIfReady()
+            }
+        }
+        do {
+            try task.run()
+            telemetryProcess = task
+            telemetryOutput = pipe.fileHandleForReading
+        } catch {
+            telemetryView?.disconnected = true
+            jsonLine("telemetry_display_state", fields: ["state": "DISCONNECTED"])
+        }
+    }
+
+    func consumeTelemetry(_ data: Data) {
+        guard !closing else { return }
+        telemetryBuffer.append(data)
+        guard telemetryBuffer.count <= 131072 else {
+            telemetryBuffer.removeAll()
+            telemetryView?.disconnected = true
+            return
+        }
+        while let newline = telemetryBuffer.firstIndex(of: 10) {
+            let line = Data(telemetryBuffer[..<newline])
+            telemetryBuffer.removeSubrange(...newline)
+            guard line.count <= 65535,
+                  let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            telemetryView?.accept(value)
+        }
+    }
+
+    func completeCloseIfReady() {
+        if closing && process == nil && telemetryProcess == nil && connectivityProcess == nil {
+            jsonLine("keyboard_ui_closed")
+            NSApp.terminate(nil)
+        }
     }
 
     func startBridge() {
@@ -505,8 +915,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.input = nil
                 self.output = nil
                 if self.closing {
-                    jsonLine("keyboard_ui_closed")
-                    NSApp.terminate(nil)
+                    self.completeCloseIfReady()
                 } else {
                     self.view.connectionLost()
                     jsonLine("keyboard_ui_paused", fields: ["reason": "connection_lost"])
@@ -588,10 +997,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         writePayload(["action": "exit"])
         try? input?.close()
         input = nil
-        if process == nil {
-            jsonLine("keyboard_ui_closed")
-            NSApp.terminate(nil)
-        }
+        if let telemetry = telemetryProcess, telemetry.isRunning { telemetry.terminate() }
+        completeCloseIfReady()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -604,11 +1011,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 }
 
-guard CommandLine.arguments.count == 2 else {
-    fputs("usage: KeyboardControl <bridge-command>\n", stderr)
+guard (2...4).contains(CommandLine.arguments.count) else {
+    fputs("usage: KeyboardControl <bridge-command> [telemetry-argv-json] [connectivity-argv-json]\n", stderr)
     exit(2)
 }
+var telemetryCommand: [String] = []
+if CommandLine.arguments.count >= 3 {
+    guard let data = CommandLine.arguments[2].data(using: .utf8),
+          let arguments = try? JSONSerialization.jsonObject(with: data) as? [String],
+          !arguments.isEmpty else { exit(2) }
+    telemetryCommand = arguments
+}
+var connectivityCommand: [String] = []
+if CommandLine.arguments.count == 4 {
+    guard let data = CommandLine.arguments[3].data(using: .utf8),
+          let arguments = try? JSONSerialization.jsonObject(with: data) as? [String],
+          !arguments.isEmpty else { exit(2) }
+    connectivityCommand = arguments
+}
 let application = NSApplication.shared
-let delegate = AppDelegate(command: CommandLine.arguments[1])
+let delegate = AppDelegate(command: CommandLine.arguments[1], telemetryCommand: telemetryCommand, connectivityCommand: connectivityCommand)
 application.delegate = delegate
 application.run()

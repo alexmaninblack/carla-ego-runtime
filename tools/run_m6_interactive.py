@@ -78,7 +78,8 @@ def wait_until_ready(process: Any, timeout: float, description: str) -> None:
 
 
 def keyboard_command(
-    arguments: argparse.Namespace, socket_file: Path, token_file: Path
+    arguments: argparse.Namespace, socket_file: Path, token_file: Path,
+    telemetry_command: Optional[list[str]] = None,
 ) -> list[str]:
     bridge = [
         str(arguments.python),
@@ -90,10 +91,18 @@ def keyboard_command(
         "--client-id",
         "m6-keyboard-client",
     ]
-    return [
+    result = [
         str(arguments.keyboard_ui),
         shlex.join(bridge),
     ]
+    if telemetry_command:
+        result.append(json.dumps(telemetry_command))
+        if getattr(arguments, "connectivity_command", None):
+            command = json.loads(arguments.connectivity_command)
+            if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+                raise ValueError("invalid connectivity command argv")
+            result.append(json.dumps(command))
+    return result
 
 
 def control_paths(control_directory: Path) -> tuple[Path, Path]:
@@ -179,7 +188,6 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
 
     controller: Optional[Any] = None
     runtime: Optional[Any] = None
-    dashboard: Optional[Any] = None
     keyboard: Optional[Any] = None
     keyboard_exit: Optional[int] = None
     dashboard_health: Dict[str, Any] = {}
@@ -225,26 +233,16 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
             raise RuntimeError("independent VISS start probe failed")
         timeline_mark(timeline_file, started_at, "viss_verified")
 
-        print("[4/6] Opening the live VSS dashboard in this terminal...", flush=True)
+        print("[4/6] Preparing the native VSS telemetry feed...", flush=True)
         dashboard_command = M5.dashboard_command(arguments.viss_client, config, arguments.certificate)
+        dashboard_command[dashboard_command.index("--monitor")] = "--monitor-json"
         if arguments.demo_journal:
             dashboard_command.extend(["--demo-journal", str(arguments.demo_journal)])
-        dashboard = M5.CapturedProcess(
-            "dashboard",
-            dashboard_command,
-            log,
-            "Connection        CONNECTED",
-            echo=True,
-            record_output=False,
-            prefix_output=False,
-        )
-        wait_until_ready(dashboard, 20.0, "the live VSS dashboard")
-        timeline_mark(timeline_file, started_at, "dashboard_ready")
 
-        print("[5/6] Opening keyboard control...", flush=True)
+        print("[5/6] Opening Driving Control and Telemetry...", flush=True)
         keyboard = M5.CapturedProcess(
             "keyboard",
-            keyboard_command(arguments, socket_file, token_file),
+            keyboard_command(arguments, socket_file, token_file, dashboard_command),
             log,
             "keyboard_ui_ready",
             echo=True,
@@ -271,8 +269,6 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
                 raise RuntimeError("external controller stopped during live handover")
             if runtime.process.poll() is not None:
                 raise RuntimeError("telemetry runtime stopped during live handover")
-            if dashboard.process.poll() is not None:
-                raise RuntimeError("VSS dashboard stopped during live handover")
         keyboard_exit = int(keyboard.process.returncode)
         timeline_mark(
             timeline_file,
@@ -281,9 +277,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
             exit_code=keyboard_exit,
         )
 
-        dashboard_health = dashboard.health_snapshot()
-        dashboard.stop(allow_kill=False)
-        dashboard = None
+        dashboard_health = {"presentation": "native", "owner": "keyboard_ui",
+                            "sampleRecording": False}
         if not M5.run_viss_probe(
             arguments.viss_client, config, arguments.certificate, log, "end"
         ):
@@ -339,8 +334,6 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     finally:
         if keyboard is not None and keyboard.process.poll() is None:
             keyboard.stop(allow_kill=False)
-        if dashboard is not None and dashboard.process.poll() is None:
-            dashboard.stop(allow_kill=False)
         if runtime is not None and runtime.process.poll() is None:
             runtime.stop(allow_kill=False)
         if controller is not None and controller.process.poll() is None:
@@ -362,6 +355,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--run-directory", required=True, type=Path)
     parser.add_argument("--control-directory", required=True, type=Path)
     parser.add_argument("--demo-journal", type=Path, help="read-only existing Demo Control journal for audience context")
+    parser.add_argument("--connectivity-command", help="trusted Demo Control argv prefix for the selected-vehicle external link")
     parser.add_argument("--started-timestamp", required=True, type=float)
     parser.add_argument("--viss-development", action="store_true",
                         help="explicit local server-TLS profile; no client mTLS")
