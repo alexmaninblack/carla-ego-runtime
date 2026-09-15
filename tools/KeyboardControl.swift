@@ -20,6 +20,10 @@ func jsonLine(_ event: String, fields: [String: Any] = [:]) {
 }
 
 final class ControlView: NSView {
+    // Fixed palette shared with native telemetry, independent of macOS theme.
+    private let ink = NSColor(calibratedWhite: 0.94, alpha: 1)
+    private let muted = NSColor(calibratedRed: 0.64, green: 0.71, blue: 0.77, alpha: 1)
+    private let surface = NSColor(calibratedRed: 0.10, green: 0.14, blue: 0.18, alpha: 1)
     var mode = "safe_stop"
     var awaitingOperator = false
     var availableModes = Set(["safe_stop", "manual", "autopilot"])
@@ -34,6 +38,7 @@ final class ControlView: NSView {
     var onExit: (() -> Void)?
     var onConnectivity: (() -> Void)?
     var externalState = "UNKNOWN"
+    var externalReadAt: TimeInterval = 0
     var externalBusy = false
     private var connectivityRect: NSRect {
         NSRect(x: 18, y: availableModes.contains("scenario") ? 152 : 112,
@@ -110,7 +115,7 @@ final class ControlView: NSView {
             brake = awaitingOperator ? 1 : 0
             steering = 0
         } else if selected == "autopilot" {
-            statusDetail = "AUTOPILOT — VEHICLE DRIVING"
+            statusDetail = "AUTOPILOT — MODE SELECTED"
             throttle = 0
             brake = 0
             steering = 0
@@ -273,18 +278,18 @@ final class ControlView: NSView {
         roundedCard(
             rect,
             fill: enabled
-                ? NSColor(calibratedWhite: 0.995, alpha: 1)
-                : NSColor(calibratedWhite: 0.92, alpha: 1),
+                ? NSColor(calibratedRed: 0.16, green: 0.23, blue: 0.29, alpha: 1)
+                : surface,
             border: enabled
-                ? NSColor(calibratedWhite: 0.62, alpha: 1)
-                : NSColor(calibratedWhite: 0.82, alpha: 1),
+                ? NSColor(calibratedRed: 0.39, green: 0.56, blue: 0.68, alpha: 1)
+                : NSColor(calibratedWhite: 0.23, alpha: 1),
             lineWidth: enabled ? 1.5 : 1
         )
         centeredText(
             title,
             in: rect,
             size: 13,
-            color: enabled ? .labelColor : .tertiaryLabelColor,
+            color: enabled ? ink : muted,
             bold: true
         )
     }
@@ -297,12 +302,13 @@ final class ControlView: NSView {
         textColor: NSColor,
         selected: Bool
     ) {
-        roundedCard(rect, fill: fill, border: border, lineWidth: selected ? 3 : 1.5)
-        centeredText(title, in: rect, size: 12, color: textColor, bold: true)
+        let background = selected ? border.withAlphaComponent(0.28) : surface
+        roundedCard(rect, fill: background, border: border, lineWidth: selected ? 3 : 1.5)
+        centeredText(title, in: rect, size: 12, color: ink, bold: true)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 0.96, alpha: 1).setFill()
+        NSColor(calibratedRed: 0.065, green: 0.085, blue: 0.11, alpha: 1).setFill()
         bounds.fill()
 
         let statusFill: NSColor
@@ -320,8 +326,8 @@ final class ControlView: NSView {
             statusFill = NSColor(calibratedRed: 0.96, green: 0.84, blue: 0.84, alpha: 1)
             statusBorder = NSColor(calibratedRed: 0.82, green: 0.34, blue: 0.34, alpha: 1)
         }
-        roundedCard(statusRect, fill: statusFill, border: statusBorder, lineWidth: 1.5)
-        centeredText(statusDetail, in: statusRect, size: 15, color: statusBorder, bold: true)
+        roundedCard(statusRect, fill: statusFill.withAlphaComponent(0.10), border: statusBorder, lineWidth: 1.5)
+        centeredText(statusDetail, in: statusRect, size: 15, color: ink, bold: true)
 
         let arrowsEnabled = mode == "manual"
         keycap("↑  THROTTLE", rect: throttleKeyRect, enabled: arrowsEnabled)
@@ -335,7 +341,7 @@ final class ControlView: NSView {
                 x: 44,
                 y: 270,
                 size: 12,
-                color: .secondaryLabelColor,
+                color: muted,
                 bold: true,
                 alignment: .center
             )
@@ -345,38 +351,38 @@ final class ControlView: NSView {
                 x: 44,
                 y: 270,
                 size: 12,
-                color: .secondaryLabelColor,
+                color: muted,
                 bold: true,
                 alignment: .center
             )
         } else {
-            text("THROTTLE", x: 46, y: 302, size: 12, color: .secondaryLabelColor)
+            text("THROTTLE", x: 46, y: 302, size: 12, color: muted)
             text(
                 String(format: "%.2f", throttle),
                 x: 44,
                 y: 302,
                 size: 13,
-                color: .labelColor,
+                color: ink,
                 bold: true,
                 alignment: .right
             )
-            text("BRAKE", x: 46, y: 274, size: 12, color: .secondaryLabelColor)
+            text("BRAKE", x: 46, y: 274, size: 12, color: muted)
             text(
                 String(format: "%.2f", brake),
                 x: 44,
                 y: 274,
                 size: 13,
-                color: .labelColor,
+                color: ink,
                 bold: true,
                 alignment: .right
             )
-            text("STEERING", x: 46, y: 246, size: 12, color: .secondaryLabelColor)
+            text("STEERING", x: 46, y: 246, size: 12, color: muted)
             text(
                 String(format: "%+.2f", steering),
                 x: 44,
                 y: 246,
                 size: 13,
-                color: .labelColor,
+                color: ink,
                 bold: true,
                 alignment: .right
             )
@@ -389,7 +395,7 @@ final class ControlView: NSView {
             x: 44,
             y: 205,
             size: 9,
-            color: .secondaryLabelColor,
+            color: muted,
             alignment: .center
         )
         text(
@@ -397,21 +403,23 @@ final class ControlView: NSView {
             x: 44,
             y: 187,
             size: 10,
-            color: .secondaryLabelColor,
+            color: muted,
             alignment: .center
         )
 
         if onConnectivity != nil {
+            let fresh = externalReadAt > 0 && ProcessInfo.processInfo.systemUptime - externalReadAt <= 15
             let title = externalBusy ? "EXTERNAL NETWORK · CHANGING…" :
+                !fresh && ["ON", "OFF"].contains(externalState) ? "EXTERNAL NETWORK: STALE · CHECK" :
                 externalState == "ON" ? "EXTERNAL NETWORK: ON · DISCONNECT" :
                 externalState == "OFF" ? "EXTERNAL NETWORK: OFF · RECONNECT" :
                 externalState == "NO_VEHICLE" ? "EXTERNAL NETWORK · SELECT A VEHICLE" :
                 "EXTERNAL NETWORK: UNKNOWN · CHECK"
-            let offline = externalState == "OFF"
+            let offline = fresh && externalState == "OFF"
             roundedCard(connectivityRect,
-                fill: offline ? NSColor(calibratedRed: 1, green: 0.9, blue: 0.75, alpha: 1) : NSColor(calibratedWhite: 0.91, alpha: 1),
+                fill: offline ? NSColor(calibratedRed: 0.30, green: 0.22, blue: 0.12, alpha: 1) : surface,
                 border: offline ? .systemOrange : .gray, lineWidth: 1.5)
-            centeredText(title, in: connectivityRect, size: 14, color: .black, bold: true)
+            centeredText(title, in: connectivityRect, size: 14, color: ink, bold: true)
         }
 
         if availableModes.contains("scenario") {
@@ -585,6 +593,14 @@ final class TelemetryView: NSView {
         text(title, 20, y, 14, .lightGray, width: 142)
         text(amount, 166, y, 15, ink, width: bounds.width - 186, alignment: .right)
     }
+    private func advisory(_ team: String) -> String {
+        // Read only the existing dashboard contract. No Cloud/VM read and no
+        // backend-synthetic result may turn into a vehicle advisory.
+        guard dataState == "LIVE", let raw = (sample["advisory"] as? [String: String])?[team] else { return "Unavailable" }
+        return ["UNAVAILABLE": "Unavailable", "NONE": "None",
+                "INSPECTION_RECOMMENDED": "Inspection recommended",
+                "SERVICE_REQUIRED": "Service required"][raw] ?? "Unavailable"
+    }
     private func drawVehicle(_ ink: NSColor) {
         let steering = value("Chassis.Axle.Row1.SteeringAngle")
         let rpm = value("Powertrain.CombustionEngine.Speed", 0)
@@ -653,8 +669,8 @@ final class TelemetryView: NSView {
             pedal("Brake", "Chassis.Brake.PedalPosition", 222, .systemRed)
             separator(265)
             text("DRIVER ADVISORY", 20, 286, 17, .white, bold: true)
-            dataRow("Brake", "Unavailable", 329, .systemOrange)
-            dataRow("Tire", "Unavailable", 371, .systemOrange)
+            dataRow("Brake", advisory("brake"), 329, .systemOrange)
+            dataRow("Tire", advisory("tire"), 371, .systemOrange)
         }
     }
 }
@@ -823,6 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.view.externalState = state
                     self.connectivityTarget = target
                     self.connectivityReadAt = ProcessInfo.processInfo.systemUptime
+                    self.view.externalReadAt = self.connectivityReadAt
                 } else {
                     self.view.externalState = result?["message"] as? String == "EXTERNAL_LINK_CURRENT_VEHICLE_REQUIRED" ? "NO_VEHICLE" : "UNKNOWN"
                     self.connectivityTarget = nil

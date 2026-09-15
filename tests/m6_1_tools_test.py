@@ -31,6 +31,14 @@ M6_RUNNER = load_module("m6_acceptance_tested", REPOSITORY / "tools" / "run_m6.p
 
 
 class M61ToolTests(unittest.TestCase):
+    def test_native_advisory_uses_only_allowlisted_dashboard_contract_and_fails_closed(self):
+        source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
+        self.assertIn('guard dataState == "LIVE", let raw = (sample["advisory"] as? [String: String])?[team]', source)
+        self.assertIn('"SERVICE_REQUIRED": "Service required"', source)
+        self.assertIn('dataRow("Brake", advisory("brake")', source)
+        self.assertIn('dataRow("Tire", advisory("tire")', source)
+        self.assertIn('][raw] ?? "Unavailable"', source)
+
     def test_stationary_manual_ready_does_not_emit_focus_stop_or_neutral_commands(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
         self.assertIn('awaitingOperator = selected == "manual" && reason == "manual_ready"', source)
