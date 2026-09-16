@@ -69,10 +69,21 @@ int main() {
     {"activeUntil", "2026-09-16T09:40:30.000Z"}};
   // Use the same parser clock so this host test never depends on wall time.
   const auto observed = *ParseIso8601Utc("2026-09-16T09:40:00.000Z");
+  const std::string ba="Vehicle.OEM.BrakeHealth.Advisory.Availability",ta="Vehicle.OEM.TireHealth.Advisory.Availability";
+  assert(DashboardAdvisory(signals,true,false,observed)=="NOT_AVAILABLE");
+  json::object available{{"schemaVersion",1},{"supported",true},{"ready",false},{"everReady",false},
+    {"gatewayObservedAt","2026-09-16T09:40:00.000Z"},{"expiresAt","2026-09-16T09:40:15.000Z"}};
+  signals[ba]=json::serialize(available);
+  assert(DashboardAdvisory(signals,true,false,observed)=="WAITING_FOR_SERVICE");
+  available["ready"]=true;available["everReady"]=true;signals[ba]=json::serialize(available);
+  assert(DashboardAdvisory(signals,true,false,observed)=="MONITORING");
+  available["ready"]=false;signals[ba]=json::serialize(available);
+  assert(DashboardAdvisory(signals,true,false,observed)=="UNAVAILABLE");
+  available["ready"]=true;signals[ba]=json::serialize(available);signals[ta]=json::serialize(available);
   signals["Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
   assert(DashboardAdvisory(signals, true, false, observed) == "INSPECTION_RECOMMENDED");
   assert(DashboardAdvisory(signals, false, false, observed) == "UNAVAILABLE");
-  assert(DashboardAdvisory(signals, true, false, observed + std::chrono::seconds(31)) == "UNAVAILABLE");
+  assert(DashboardAdvisory(signals, true, false, observed + std::chrono::seconds(31)) == "NOT_AVAILABLE");
   signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
   assert(DashboardAdvisory(signals, true, true, observed) == "UNAVAILABLE");
   gateway["activeRecommendation"] = "TIRE_INSPECTION_RECOMMENDED";
@@ -85,10 +96,10 @@ int main() {
   gateway["state"] = "CLEARED"; gateway["activeRecommendation"] = "NONE";
   gateway["activeReasonCode"] = "NONE"; gateway["activeUntil"] = nullptr;
   signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
-  assert(DashboardAdvisory(signals, true, true, observed) == "NONE");
+  assert(DashboardAdvisory(signals, true, true, observed) == "MONITORING");
   gateway["state"] = "EXPIRED";
   signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
-  assert(DashboardAdvisory(signals, true, true, observed) == "EXPIRED");
+  assert(DashboardAdvisory(signals, true, true, observed) == "MONITORING");
   gateway["extra"] = true;
   signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
   assert(DashboardAdvisory(signals, true, true, observed) == "UNAVAILABLE");

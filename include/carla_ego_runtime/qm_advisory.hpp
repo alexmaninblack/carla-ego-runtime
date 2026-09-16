@@ -12,6 +12,7 @@
 namespace carla_ego_runtime {
 
 bool IsQmAdvisoryRequestPath(std::string_view path);
+bool IsQmAdvisoryAvailabilityPath(std::string_view path);
 bool IsQmAdvisoryPath(std::string_view path);
 
 struct QmAdvisoryResult {

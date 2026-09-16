@@ -195,6 +195,8 @@ std::string BuildMonitorRequest(std::uint32_t period_ms) {
            "CarlaSimulation.ChaosWheel.Row2.Right.*",
            "OEM.BrakeHealth.Advisory.GatewayStatus",
            "OEM.TireHealth.Advisory.GatewayStatus",
+           "OEM.BrakeHealth.Advisory.Availability",
+           "OEM.TireHealth.Advisory.Availability",
        }) {
     paths.emplace_back(path);
   }
@@ -445,9 +447,25 @@ std::string StopObservation(const SignalValues &signals, bool live) {
 std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
                              std::chrono::system_clock::time_point now = std::chrono::system_clock::now()) {
   if (!live) return "UNAVAILABLE";
+  std::string idle="NOT_AVAILABLE";
+  const auto availability=Value(signals,tire?"Vehicle.OEM.TireHealth.Advisory.Availability":"Vehicle.OEM.BrakeHealth.Advisory.Availability","");
+  if(availability.empty())return idle;
+  try {
+    if(availability.size()>512)return "UNAVAILABLE";
+    const auto value=json::parse(availability);if(!value.is_object())return "UNAVAILABLE";
+    const auto& state=value.as_object();
+    if(state.size()!=6||!state.at("schemaVersion").is_int64()||state.at("schemaVersion").as_int64()!=1||
+       !state.at("supported").is_bool()||!state.at("ready").is_bool()||!state.at("everReady").is_bool())return "UNAVAILABLE";
+    const auto observed=ParseIso8601Utc(AsString(state.at("gatewayObservedAt").as_string()));
+    const auto expires=ParseIso8601Utc(AsString(state.at("expiresAt").as_string()));
+    if(!observed||!expires||*observed>now||*expires<=*observed||*expires-*observed>std::chrono::seconds(15))return "UNAVAILABLE";
+    if(!state.at("supported").as_bool()||*expires<=now)return "NOT_AVAILABLE";
+    idle=state.at("ready").as_bool()?"MONITORING":state.at("everReady").as_bool()?"UNAVAILABLE":"WAITING_FOR_SERVICE";
+  } catch(...) {return "UNAVAILABLE";}
   const auto raw = Value(signals, tire ? "Vehicle.OEM.TireHealth.Advisory.GatewayStatus"
                                       : "Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus", "");
-  if (raw.empty() || raw.size() > 1024) return "UNAVAILABLE";
+  if(raw.empty())return idle;
+  if(raw.size()>1024)return "UNAVAILABLE";
   try {
     const auto value = json::parse(raw);
     if (!value.is_object()) return "UNAVAILABLE";
@@ -469,7 +487,7 @@ std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
     const auto active_reason = AsString(status.at("activeReasonCode").as_string());
     if (recommendation == "NONE") {
       if (active_reason != "NONE" || !status.at("activeUntil").is_null()) return "UNAVAILABLE";
-      return state == "CLEARED" ? "NONE" : state == "EXPIRED" ? "EXPIRED" : "UNAVAILABLE";
+      return (state=="CLEARED"||state=="EXPIRED")?idle:"UNAVAILABLE";
     }
     if (state == "CLEARED" || state == "EXPIRED") return "UNAVAILABLE";
     if ((!tire && (recommendation != "INSPECTION_RECOMMENDED" || active_reason != "PREDICTED_BRAKE_DEGRADATION")) ||

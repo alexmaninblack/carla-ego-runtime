@@ -599,11 +599,19 @@ final class TelemetryView: NSView {
         // Read only the existing dashboard contract. No Cloud/VM read and no
         // backend-synthetic result may turn into a vehicle advisory.
         guard dataState == "LIVE", let raw = (sample["advisory"] as? [String: String])?[team] else { return "Unavailable" }
-        return ["UNAVAILABLE": "Unavailable", "NONE": "None",
+        return ["NOT_AVAILABLE": "Not available", "WAITING_FOR_SERVICE": "Waiting for service",
+                "MONITORING": "Monitoring", "UNAVAILABLE": "Unavailable", "NONE": "None",
                 "EXPIRED": "Expired",
                 "INSPECTION_RECOMMENDED": "Inspection recommended",
                 "TIRE_INSPECTION_RECOMMENDED": "Inspection recommended",
                 "TIRE_REPLACEMENT_RECOMMENDED": "Replacement recommended"][raw] ?? "Unavailable"
+    }
+    private func advisoryColor(_ team: String) -> NSColor {
+        guard dataState == "LIVE" else { return .lightGray }
+        let state = (sample["advisory"] as? [String: String])?[team] ?? "UNAVAILABLE"
+        if state == "MONITORING" { return .systemCyan }
+        if state == "NOT_AVAILABLE" || state == "WAITING_FOR_SERVICE" { return .lightGray }
+        return .systemOrange
     }
     private func drawVehicle(_ ink: NSColor) {
         let steering = value("Chassis.Axle.Row1.SteeringAngle")
@@ -673,8 +681,8 @@ final class TelemetryView: NSView {
             pedal("Brake", "Chassis.Brake.PedalPosition", 222, .systemRed)
             separator(265)
             text("DRIVER ADVISORY", 20, 286, 17, .white, bold: true)
-            dataRow("Brake", advisory("brake"), 329, .systemOrange)
-            dataRow("Tire", advisory("tire"), 371, .systemOrange)
+            dataRow("Brake", advisory("brake"), 329, advisoryColor("brake"))
+            dataRow("Tire", advisory("tire"), 371, advisoryColor("tire"))
         }
     }
 }

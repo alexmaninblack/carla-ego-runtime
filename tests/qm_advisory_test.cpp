@@ -36,6 +36,29 @@ json::object Status(QmAdvisoryGateway &gateway, std::chrono::system_clock::time_
 int main() {
   const auto now = std::chrono::system_clock::from_time_t(1789542000);
   const auto mono = std::chrono::steady_clock::time_point(1000s);
+  {
+    QmAdvisoryGateway readiness(now-1s);
+    const std::string path="Vehicle.OEM.BrakeHealth.Advisory.Availability";
+    auto heartbeat=json::object{{"schemaVersion",1},{"ready",false},{"observedAt",FormatIso8601Utc(now)}};
+    assert(IsQmAdvisoryAvailabilityPath(path)&&IsQmAdvisoryPath(path)&&!IsQmAdvisoryRequestPath(path));
+    assert(!readiness.Handle({VissClientRole::EngineeringDashboard,1,0},path,Canonical(heartbeat),now,mono).accepted);
+    assert(readiness.Handle(selected,path,Canonical(heartbeat),now,mono).accepted);
+    const auto projection=[&](auto wall,auto steady){return json::parse(std::get<std::string>(readiness.Snapshot(wall,steady).at(4).value)).as_object();};
+    assert(!projection(now,mono).at("everReady").as_bool());
+    heartbeat["ready"]=true;heartbeat["observedAt"]=FormatIso8601Utc(now+5s);
+    assert(readiness.Handle(selected,path,Canonical(heartbeat),now+5s,mono+5s).accepted);
+    assert(projection(now+5s,mono+5s).at("ready").as_bool());
+    assert(!readiness.Handle(selected,path,Canonical(heartbeat),now+6s,mono+6s).accepted);
+    assert(std::get<std::string>(readiness.Snapshot(now+5s,mono+5s).at(1).value).empty());
+    assert(std::get<std::string>(readiness.Snapshot(now+5s,mono+5s).at(5).value).empty());
+    assert(!projection(now+6s,mono+21s).at("supported").as_bool());
+    heartbeat["ready"]=false;heartbeat["observedAt"]=FormatIso8601Utc(now+10s);
+    assert(readiness.Handle(selected,path,Canonical(heartbeat),now+10s,mono+10s).accepted);
+    assert(projection(now+10s,mono+10s).at("everReady").as_bool());
+    heartbeat["extra"]=true;assert(!readiness.Handle(selected,path,Canonical(heartbeat),now+10s,mono+10s).accepted);
+    readiness.ResetAssignment();
+    assert(std::get<std::string>(readiness.Snapshot(now+10s,mono+10s).at(4).value).empty());
+  }
   QmAdvisoryGateway gateway(now - 1s);
   assert(gateway.Snapshot(now, mono).at(0).timestamp == FormatIso8601Utc(now));
   auto request = Request(now);

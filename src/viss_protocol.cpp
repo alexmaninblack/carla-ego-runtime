@@ -501,7 +501,7 @@ private:
                            kBadRequestReason, "Missing or invalid value",
                            response_time);
     }
-    if (advisory_ && IsQmAdvisoryRequestPath(*path) && value->is_string()) {
+    if (advisory_ && (IsQmAdvisoryRequestPath(*path)||IsQmAdvisoryAvailabilityPath(*path)) && value->is_string()) {
       const auto decision = advisory_->Handle(access_, *path, AsString(value->as_string()), response_time, schedule_time);
       if (decision.accepted) return {json::serialize(SuccessBase("set", request_id, response_time)), false};
       return ProtocolError("set", request_id, kBadRequestNumber, kInvalidDataReason,

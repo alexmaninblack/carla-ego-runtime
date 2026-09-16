@@ -24,6 +24,9 @@ constexpr std::array<std::string_view, 2> kRequestPaths{
 constexpr std::array<std::string_view, 2> kStatusPaths{
     "Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus",
     "Vehicle.OEM.TireHealth.Advisory.GatewayStatus"};
+constexpr std::array<std::string_view,2> kAvailabilityPaths{
+    "Vehicle.OEM.BrakeHealth.Advisory.Availability",
+    "Vehicle.OEM.TireHealth.Advisory.Availability"};
 
 std::string Text(const json::object &value, std::string_view name) {
   const auto *item = value.if_contains(name);
@@ -145,8 +148,11 @@ bool IsQmAdvisoryRequestPath(std::string_view path) {
   return std::find(kRequestPaths.begin(), kRequestPaths.end(), path) != kRequestPaths.end();
 }
 bool IsQmAdvisoryPath(std::string_view path) {
-  return IsQmAdvisoryRequestPath(path) ||
+  return IsQmAdvisoryRequestPath(path) || IsQmAdvisoryAvailabilityPath(path) ||
          std::find(kStatusPaths.begin(), kStatusPaths.end(), path) != kStatusPaths.end();
+}
+bool IsQmAdvisoryAvailabilityPath(std::string_view path) {
+  return std::find(kAvailabilityPaths.begin(),kAvailabilityPaths.end(),path)!=kAvailabilityPaths.end();
 }
 
 class QmAdvisoryGateway::Impl {
@@ -158,6 +164,22 @@ public:
     std::lock_guard lock(mutex_);
     if (access.role != VissClientRole::SelectedPlatformUnit || access.assignment_generation == 0)
       return {false, "UNAUTHORIZED_SOURCE"};
+    const auto availability=std::find(kAvailabilityPaths.begin(),kAvailabilityPaths.end(),path);
+    if(availability!=kAvailabilityPaths.end()) {
+      if(raw.empty()||raw.size()>256)return {false,"INVALID_SCHEMA"};
+      boost::system::error_code error;const auto value=json::parse(raw,error);
+      if(error||!value.is_object()||Canonical(value.as_object())!=raw)return {false,"INVALID_SCHEMA"};
+      const auto& fields=value.as_object();const auto* ready=fields.if_contains("ready");
+      if(fields.size()!=3||Integer(fields.if_contains("schemaVersion"))!=1||!ready||!ready->is_bool())
+        return {false,"INVALID_SCHEMA"};
+      const auto observed=Timestamp(Text(fields,"observedAt"));
+      if(!observed||*observed<started_||*observed>now||now-*observed>15s)return {false,"STALE_REQUEST"};
+      auto& target=endpoints_[static_cast<std::size_t>(availability-kAvailabilityPaths.begin())];
+      if(target.support_observed && *observed<=*target.support_observed)return {false,"STALE_REQUEST"};
+      target.support_observed=*observed;target.support_received=now;target.support_deadline=mono+15s;
+      target.producer_ready=ready->as_bool();target.producer_seen=target.producer_seen||target.producer_ready;
+      return {true,"NONE"};
+    }
     const auto found = std::find(kRequestPaths.begin(), kRequestPaths.end(), path);
     if (found == kRequestPaths.end()) return {false, "UNAUTHORIZED_PATH"};
     const auto index = static_cast<std::size_t>(found - kRequestPaths.begin());
@@ -220,6 +242,17 @@ public:
                         endpoint.request_timestamp.empty() ? FormatIso8601Utc(now) : endpoint.request_timestamp});
       result.push_back({std::string(kStatusPaths[index]), endpoint.status, FormatIso8601Utc(now)});
     }
+    // Append the readiness projection without changing legacy leaf ordering.
+    for(std::size_t index=0;index<endpoints_.size();++index) {
+      const auto& e=endpoints_[index];std::string projection;
+      if(e.support_observed) {
+        const bool supported=mono<e.support_deadline&&now<e.support_received+15s;
+        projection=Canonical(json::object{{"schemaVersion",1},{"supported",supported},
+          {"ready",supported&&e.producer_ready},{"everReady",e.producer_seen},
+          {"gatewayObservedAt",FormatIso8601Utc(e.support_received)},{"expiresAt",FormatIso8601Utc(e.support_received+15s)}});
+      }
+      result.push_back({std::string(kAvailabilityPaths[index]),projection,FormatIso8601Utc(now)});
+    }
     return result;
   }
 
@@ -241,6 +274,10 @@ private:
     std::string request_timestamp;
     std::string status;
     std::string last_application_status;
+    std::optional<Wall::time_point> support_observed;
+    Wall::time_point support_received;
+    Mono::time_point support_deadline;
+    bool producer_ready=false,producer_seen=false;
   };
   static std::string Status(const Endpoint &endpoint, const Request &request,
                             std::string_view state, std::string_view reason, Wall::time_point now) {
