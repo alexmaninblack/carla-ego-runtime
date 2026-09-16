@@ -313,7 +313,7 @@ private:
         return;
       }
       access_ = *access;
-      protocol_ = VissSessionProtocol(config_.protocol_limits, *access_);
+      protocol_ = VissSessionProtocol(config_.protocol_limits, *access_, owner_.advisory_);
       http::async_read(websocket_.next_layer(), input_buffer_, upgrade_request_,
                        [self = shared_from_this()](
                            boost::system::error_code read_error, std::size_t) {
@@ -568,6 +568,7 @@ private:
     if (mutation == VissAssignmentMutation::None) {
       return;
     }
+    advisory_->ResetAssignment();
     const auto sessions = sessions_;
     for (const auto &session : sessions) {
       if (session->selected_bound()) {
@@ -603,6 +604,7 @@ private:
   }
 
   const LatestVssSignalStore &signal_store_;
+  std::shared_ptr<QmAdvisoryGateway> advisory_ = std::make_shared<QmAdvisoryGateway>();
   VissServerConfig config_;
   asio::io_context io_context_;
   ssl::context tls_context_;

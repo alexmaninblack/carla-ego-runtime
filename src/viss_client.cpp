@@ -1,3 +1,5 @@
+#include "carla_ego_runtime/viss_access.hpp"
+
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
@@ -191,6 +193,8 @@ std::string BuildMonitorRequest(std::uint32_t period_ms) {
            "CarlaSimulation.ChaosWheel.Row1.Right.*",
            "CarlaSimulation.ChaosWheel.Row2.Left.*",
            "CarlaSimulation.ChaosWheel.Row2.Right.*",
+           "OEM.BrakeHealth.Advisory.GatewayStatus",
+           "OEM.TireHealth.Advisory.GatewayStatus",
        }) {
     paths.emplace_back(path);
   }
@@ -438,6 +442,46 @@ std::string StopObservation(const SignalValues &signals, bool live) {
   return "NOT ESTABLISHED";
 }
 
+std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
+                             std::chrono::system_clock::time_point now = std::chrono::system_clock::now()) {
+  if (!live) return "UNAVAILABLE";
+  const auto raw = Value(signals, tire ? "Vehicle.OEM.TireHealth.Advisory.GatewayStatus"
+                                      : "Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus", "");
+  if (raw.empty() || raw.size() > 1024) return "UNAVAILABLE";
+  try {
+    const auto value = json::parse(raw);
+    if (!value.is_object()) return "UNAVAILABLE";
+    const auto &status = value.as_object();
+    if (status.size() != 10 || !status.at("schemaVersion").is_int64() || status.at("schemaVersion").as_int64() != 1 ||
+        !status.at("requestId").is_string() || !status.at("producerEpoch").is_string() ||
+        !carla_ego_runtime::IsCanonicalUuid(AsString(status.at("requestId").as_string())) ||
+        !carla_ego_runtime::IsCanonicalUuid(AsString(status.at("producerEpoch").as_string())) ||
+        (!status.at("sequence").is_int64() && !status.at("sequence").is_uint64())) return "UNAVAILABLE";
+    if ((status.at("sequence").is_int64() && status.at("sequence").as_int64() <= 0) ||
+        (status.at("sequence").is_uint64() && status.at("sequence").as_uint64() == 0)) return "UNAVAILABLE";
+    const auto state = AsString(status.at("state").as_string());
+    const auto reason = AsString(status.at("reason").as_string());
+    if (state != "APPLIED" && state != "CLEARED" && state != "EXPIRED" && state != "REJECTED" && state != "FAILED" && state != "RECEIVED") return "UNAVAILABLE";
+    if (reason != "NONE" && reason != "UNAUTHORIZED_SOURCE" && reason != "UNAUTHORIZED_PATH" && reason != "INVALID_SCHEMA" && reason != "INVALID_VALUE" && reason != "STALE_REQUEST" && reason != "REPLAY_DETECTED" && reason != "SEQUENCE_ROLLBACK" && reason != "RATE_LIMITED" && reason != "QM_POLICY_DENIED" && reason != "INTERNAL_ERROR") return "UNAVAILABLE";
+    const auto observed = ParseIso8601Utc(AsString(status.at("gatewayObservedAt").as_string()));
+    if (!observed || *observed > now) return "UNAVAILABLE";
+    const auto recommendation = AsString(status.at("activeRecommendation").as_string());
+    const auto active_reason = AsString(status.at("activeReasonCode").as_string());
+    if (recommendation == "NONE") {
+      if (active_reason != "NONE" || !status.at("activeUntil").is_null()) return "UNAVAILABLE";
+      return state == "CLEARED" ? "NONE" : state == "EXPIRED" ? "EXPIRED" : "UNAVAILABLE";
+    }
+    if (state == "CLEARED" || state == "EXPIRED") return "UNAVAILABLE";
+    if ((!tire && (recommendation != "INSPECTION_RECOMMENDED" || active_reason != "PREDICTED_BRAKE_DEGRADATION")) ||
+        (tire && ((recommendation != "TIRE_INSPECTION_RECOMMENDED" && recommendation != "TIRE_REPLACEMENT_RECOMMENDED") || active_reason != "PREDICTED_TIRE_WEAR"))) return "UNAVAILABLE";
+    const auto until = ParseIso8601Utc(AsString(status.at("activeUntil").as_string()));
+    if (!until || *until <= now || *until - *observed > std::chrono::seconds(30)) return "UNAVAILABLE";
+    // Gateway can reject a new request while an earlier confirmed lease remains
+    // active. Render only its bounded active fields, not service intent.
+    return recommendation;
+  } catch (...) { return "UNAVAILABLE"; }
+}
+
 void RenderDashboard(const Options &options, const SignalValues &signals,
                      std::string_view updated_at,
                      const MonitorHealth &health, bool connected = true) {
@@ -457,7 +501,7 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
       {"metrics", json::object{{"simulation", MetricText(health.simulation_hz, 1, " Hz")},
         {"delivery", MetricText(health.delivery_hz, 1, " events/s")},
         {"latency", MetricText(health.event_latency_ms, 1, " ms")}}},
-      {"advisory", json::object{{"brake", "UNAVAILABLE"}, {"tire", "UNAVAILABLE"}}},
+      {"advisory", json::object{{"brake", DashboardAdvisory(signals, live, false)}, {"tire", DashboardAdvisory(signals, live, true)}}},
       {"signals", std::move(values)}};
     const auto output = json::serialize(record);
     if (output.size() <= 65535) std::cout << output << '\n' << std::flush;
@@ -482,8 +526,8 @@ void RenderDashboard(const Options &options, const SignalValues &signals,
       << "Drive mode        " << (live ? Value(signals, "Vehicle.CarlaSimulation.Control.ActiveMode") : "UNKNOWN / stale") << '\n'
       << "Safe Stop         " << StopObservation(signals, live) << '\n'
       << "DRIVER ADVISORY    Gateway confirmation\n"
-      << "Brake             UNAVAILABLE - not connected\n"
-      << "Tire              UNAVAILABLE - not connected\n"
+      << "Brake             " << DashboardAdvisory(signals, live, false) << '\n'
+      << "Tire              " << DashboardAdvisory(signals, live, true) << '\n'
       << "Frame " << Value(signals, "Vehicle.CarlaSimulation.FrameId")
       << "   Simulation time "
       << NumberText(signals, "Vehicle.CarlaSimulation.SimulationTime", 2)

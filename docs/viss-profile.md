@@ -26,7 +26,7 @@ change and compatibility notes.
 | Strict client identity | CA-verified X.509 leaf with one role URI SAN |
 | Primary payload | VISS JSON |
 | Client operations | `get`, `subscribe`, `unsubscribe` |
-| Update operation | Request syntax and standard errors supported; all initial signal nodes are read-only |
+| Update operation | Sensors remain read-only; only the two D4-008 typed QM advisory targets accept authenticated selected-VDP Set |
 | Signal model | VSS 6.0 plus `Vehicle.CarlaSimulation.*` overlay |
 | Nominal state cadence | 30 Hz for M5; 20 Hz standalone default |
 | Nominal GNSS cadence | 10 Hz |
@@ -45,9 +45,46 @@ assignment-control socket described below is a separate local control plane.
   `subscriptionId`.
 - **Unsubscribe** uses the same WebSocket connection and subscription
   identifier that created the subscription.
-- **Set** is parsed because VISS transports are required to support Update.
-  Since v0.1 exposes sensors and attributes only, attempts to update them
-  return the appropriate standard VISS error and never control the vehicle.
+- **Set** rejects sensors, arbitrary paths and all motion/control writes.
+  The selected platform role may write only the two D4-008 typed QM Request
+  leaves described below; independent/dashboard and update-runtime roles
+  cannot write them. No request body can choose an identity or authority.
+
+## Typed QM advisory boundary (D4-008)
+
+The Gateway implements the accepted solution `qm-advisory-profile` 1.1.0:
+`Vehicle.OEM.BrakeHealth.Advisory.Request` and
+`Vehicle.OEM.TireHealth.Advisory.Request`, with the corresponding
+`GatewayStatus` sensors. The VISS Set value is the unchanged canonical JSON
+string, never an object-shaped VISS value or arbitrary display text. Functional
+compatibility remains Brake v3 / Tire v1; `serviceVersion` is actual numeric
+package-release provenance, not authorization or a hard-coded release list.
+
+The current assignment authenticates the selected VDP certificate. Gateway
+revalidates exact schema/keys, endpoint enums, 2048-byte request limit, UUID and
+sequence identity, UTC dates, at-most-two-second acceptance age and 30-second
+lease. Refresh is bounded to 10 seconds; changes to one second. A bounded
+512-entry replay cache per endpoint retains accepted identities for five
+minutes and is shared across WebSocket reconnects. Different content for the
+same identity and sequence rollback fail closed. Identical repeats do not
+renew leases or replace newer state. Neither Set success nor service intent
+is presented as application evidence: GatewayStatus is the authority.
+
+Request/status leaves exist as empty unavailable values before the first
+accepted request. They may be included in the existing telemetry subscription
+or read by Get; no second selected-role connection is required or enabled.
+Lease expiry uses both UTC and a monotonic deadline. It publishes EXPIRED and
+clears active fields even if the producer disappears. Assignment handover
+clears both advisory indications. The native dashboard reads only these
+Gateway values and never contacts the VM, Cloud or functional backend.
+
+Restart qualification remains explicitly incomplete: no new durable replay
+store has been introduced. Envelopes issued before the Gateway process
+started are rejected and cannot reapply a retained target. Accepted valid
+duplicate reconciliation across a whole Gateway process restart still needs
+an approved persistence/reconstruction decision. Reconnect within the same
+Gateway process is implemented and tested. This host-tested source change is
+not evidence of deployed or live end-to-end advisory operation.
 
 The implemented filter subset is a `paths` filter for Read and a required
 `timebased` filter plus optional `paths` filter for Subscribe. Time-based

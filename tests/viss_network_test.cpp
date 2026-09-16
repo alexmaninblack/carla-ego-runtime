@@ -578,6 +578,32 @@ int main() {
     Check(StringAt(response, "action") == "get",
           "Runtime receives an allowed Safe Stop path");
 
+    const auto advisory_now = std::chrono::system_clock::now();
+    const json::object advisory_request{
+        {"decisionId", "network-fixture-only"},
+        {"expiresAt", carla_ego_runtime::FormatIso8601Utc(advisory_now + 30s)},
+        {"issuedAt", carla_ego_runtime::FormatIso8601Utc(advisory_now)},
+        {"modelVersion", "1.0.0"}, {"operation", "SET"},
+        {"producerEpoch", "22222222-2222-4222-8222-222222222222"},
+        {"reasonCode", "PREDICTED_BRAKE_DEGRADATION"},
+        {"recommendation", "INSPECTION_RECOMMENDED"},
+        {"requestId", "11111111-1111-4111-8111-111111111111"},
+        {"schemaVersion", 1}, {"sequence", 1}, {"serviceVersion", "47.0.0"}};
+    const auto advisory_set = json::serialize(json::object{
+        {"action", "set"}, {"requestId", "advisory-network"},
+        {"path", "Vehicle.OEM.BrakeHealth.Advisory.Request"},
+        {"value", json::serialize(advisory_request)}});
+    Check(ParseObject(dashboard_client.Request(advisory_set)).contains("error"),
+          "authenticated dashboard cannot submit advisory Set");
+    Check(ParseObject(runtime_client.Request(advisory_set)).contains("error"),
+          "authenticated update runtime cannot submit advisory Set");
+    Check(!ParseObject(selected_client.Request(advisory_set)).contains("error"),
+          "selected VDP can submit one typed advisory over mTLS");
+    const auto advisory_read = R"({"action":"get","path":"Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus","requestId":"advisory-status"})";
+    response = ParseObject(dashboard_client.Request(advisory_read));
+    Check(json::serialize(response).find("APPLIED") != std::string::npos,
+          "read-only dashboard observes Gateway application over mTLS");
+
     qualification_client.Close();
     std::this_thread::sleep_for(20ms);
     Check(ConnectionRejected(server.bound_port(), pki.ca_file(), dashboard),
@@ -615,6 +641,10 @@ int main() {
         R"({"action":"get","path":"Vehicle.Speed","requestId":"dashboard-after-detach"})"));
     Check(StringAt(response, "action") == "get",
           "Dashboard stays live across selected detach");
+    response = ParseObject(dashboard_client.Request(advisory_read));
+    Check(!response.contains("error") &&
+              response.at("data").as_object().at("dp").as_object().at("value") == "",
+          "detach removes old vehicle advisory indication before next assignment");
 
     assignment = ParseObject(
         AssignmentRequest(pki.assignment_socket(),

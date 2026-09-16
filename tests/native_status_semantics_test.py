@@ -16,6 +16,13 @@ class NativeStatusSemanticsTests(unittest.TestCase):
         self.assertIn("EXTERNAL NETWORK: STALE · CHECK", source)
         self.assertIn("self.view.externalReadAt = self.connectivityReadAt", source)
 
+    def test_advisory_uses_endpoint_recommendations_not_a_cloud_shortcut(self):
+        source = (Path(__file__).resolve().parents[1] / "tools/KeyboardControl.swift").read_text()
+        self.assertIn('"TIRE_INSPECTION_RECOMMENDED": "Inspection recommended"', source)
+        self.assertIn('"TIRE_REPLACEMENT_RECOMMENDED": "Replacement recommended"', source)
+        self.assertIn('"EXPIRED": "Expired"', source)
+        self.assertNotIn('"SERVICE_REQUIRED": "Service required"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

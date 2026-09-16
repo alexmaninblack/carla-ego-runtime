@@ -1,4 +1,5 @@
 #include "carla_ego_runtime/viss_access.hpp"
+#include "carla_ego_runtime/qm_advisory.hpp"
 
 #include <openssl/asn1.h>
 #include <openssl/evp.h>
@@ -326,12 +327,12 @@ bool VissRoleMayRead(VissClientRole role, std::string_view path) {
   case VissClientRole::Development:
     return true;
   case VissClientRole::SelectedPlatformUnit:
-    return IsSelectedPlatformPath(path);
+    return IsSelectedPlatformPath(path) || IsQmAdvisoryPath(path);
   case VissClientRole::PlatformUpdateRuntime:
     return IsRuntimePath(path);
   case VissClientRole::EngineeringDashboard:
   case VissClientRole::QualificationClient:
-    return IsKnownPath(path);
+    return IsKnownPath(path) || IsQmAdvisoryPath(path);
   }
   return false;
 }

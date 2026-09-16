@@ -1,6 +1,7 @@
 #pragma once
 
 #include "carla_ego_runtime/viss_access.hpp"
+#include "carla_ego_runtime/qm_advisory.hpp"
 #include "carla_ego_runtime/vss.hpp"
 
 #include <chrono>
@@ -36,7 +37,8 @@ struct VissResponse {
 class VissSessionProtocol {
 public:
   explicit VissSessionProtocol(VissProtocolLimits limits = {},
-                               VissSessionAccess access = {});
+                               VissSessionAccess access = {},
+                               std::shared_ptr<QmAdvisoryGateway> advisory = {});
   ~VissSessionProtocol();
 
   VissSessionProtocol(const VissSessionProtocol &) = delete;

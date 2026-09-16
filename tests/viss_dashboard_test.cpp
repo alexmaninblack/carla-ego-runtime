@@ -57,5 +57,40 @@ int main() {
   assert(snapshot.at("stop").as_string() == "UNKNOWN (stale telemetry)");
   assert(native.str().size() < 65536 && native.str().find('\033') == std::string::npos);
   assert(Parse({"--ca", "fixture", "--monitor-json"}).monitor_json);
+  assert(request.find("OEM.BrakeHealth.Advisory.GatewayStatus") != std::string::npos);
+  assert(request.find("OEM.TireHealth.Advisory.GatewayStatus") != std::string::npos);
+  json::object gateway{{"schemaVersion", 1},
+    {"requestId", "11111111-1111-4111-8111-111111111111"},
+    {"producerEpoch", "22222222-2222-4222-8222-222222222222"},
+    {"sequence", 1}, {"state", "APPLIED"}, {"reason", "NONE"},
+    {"gatewayObservedAt", "2026-09-16T09:40:00.000Z"},
+    {"activeRecommendation", "INSPECTION_RECOMMENDED"},
+    {"activeReasonCode", "PREDICTED_BRAKE_DEGRADATION"},
+    {"activeUntil", "2026-09-16T09:40:30.000Z"}};
+  // Use the same parser clock so this host test never depends on wall time.
+  const auto observed = *ParseIso8601Utc("2026-09-16T09:40:00.000Z");
+  signals["Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, false, observed) == "INSPECTION_RECOMMENDED");
+  assert(DashboardAdvisory(signals, false, false, observed) == "UNAVAILABLE");
+  assert(DashboardAdvisory(signals, true, false, observed + std::chrono::seconds(31)) == "UNAVAILABLE");
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "UNAVAILABLE");
+  gateway["activeRecommendation"] = "TIRE_INSPECTION_RECOMMENDED";
+  gateway["activeReasonCode"] = "PREDICTED_TIRE_WEAR";
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "TIRE_INSPECTION_RECOMMENDED");
+  gateway["activeRecommendation"] = "TIRE_REPLACEMENT_RECOMMENDED";
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "TIRE_REPLACEMENT_RECOMMENDED");
+  gateway["state"] = "CLEARED"; gateway["activeRecommendation"] = "NONE";
+  gateway["activeReasonCode"] = "NONE"; gateway["activeUntil"] = nullptr;
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "NONE");
+  gateway["state"] = "EXPIRED";
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "EXPIRED");
+  gateway["extra"] = true;
+  signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
+  assert(DashboardAdvisory(signals, true, true, observed) == "UNAVAILABLE");
   std::cout << "Dashboard freshness, stop evidence and unavailable advisory: PASS\n";
 }

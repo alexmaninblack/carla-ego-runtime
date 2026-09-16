@@ -302,8 +302,9 @@ json::object SuccessBase(std::string_view action, std::string_view request_id,
 
 class VissSessionProtocol::Impl {
 public:
-  Impl(VissProtocolLimits limits, VissSessionAccess access)
-      : limits_(limits), access_(access) {
+  Impl(VissProtocolLimits limits, VissSessionAccess access,
+       std::shared_ptr<QmAdvisoryGateway> advisory)
+      : limits_(limits), access_(access), advisory_(std::move(advisory)) {
     if (limits_.max_subscriptions == 0 || limits_.minimum_period.count() <= 0 ||
         limits_.maximum_period < limits_.minimum_period) {
       throw std::invalid_argument("invalid VISS protocol limits");
@@ -353,10 +354,10 @@ public:
     }
 
     if (action == "get") {
-      return HandleGet(object, request_id, signal_store, response_time);
+      return HandleGet(object, request_id, signal_store, response_time, schedule_time);
     }
     if (action == "set") {
-      return HandleSet(object, request_id, response_time);
+      return HandleSet(object, request_id, response_time, schedule_time);
     }
     if (action == "subscribe") {
       return HandleSubscribe(object, request_id, signal_store, response_time,
@@ -370,7 +371,7 @@ public:
       std::chrono::system_clock::time_point response_time,
       std::chrono::steady_clock::time_point schedule_time) {
     std::vector<std::string> events;
-    const auto snapshot = signal_store.Latest();
+    const auto snapshot = Snapshot(signal_store, response_time, schedule_time);
     for (auto iterator = subscriptions_.begin();
          iterator != subscriptions_.end();) {
       if (schedule_time < iterator->next_due) {
@@ -413,6 +414,17 @@ public:
   VissProtocolMetrics metrics() const { return metrics_; }
 
 private:
+  std::optional<VssSnapshot> Snapshot(const LatestVssSignalStore &store,
+                                     std::chrono::system_clock::time_point now,
+                                     std::chrono::steady_clock::time_point mono) {
+    auto snapshot = store.Latest();
+    if (snapshot && advisory_) {
+      auto points = advisory_->Snapshot(now, mono);
+      snapshot->data_points.insert(snapshot->data_points.end(), points.begin(), points.end());
+    }
+    return snapshot;
+  }
+
   struct Subscription {
     std::string id;
     std::string path;
@@ -434,7 +446,8 @@ private:
   VissResponse HandleGet(const json::object &object,
                          const std::string &request_id,
                          const LatestVssSignalStore &signal_store,
-                         std::chrono::system_clock::time_point response_time) {
+                         std::chrono::system_clock::time_point response_time,
+                         std::chrono::steady_clock::time_point schedule_time) {
     const auto path = OptionalString(object, "path");
     if (!path.has_value() || path->empty()) {
       return ProtocolError("get", request_id, kBadRequestNumber,
@@ -451,7 +464,7 @@ private:
                            kBadRequestReason, "Missing or invalid filter",
                            response_time);
     }
-    const auto snapshot = signal_store.Latest();
+    const auto snapshot = Snapshot(signal_store, response_time, schedule_time);
     if (!snapshot.has_value()) {
       return ProtocolError("get", request_id, kUnavailableNumber,
                            kUnavailableReason, "Data is unavailable",
@@ -474,7 +487,8 @@ private:
 
   VissResponse HandleSet(const json::object &object,
                          const std::string &request_id,
-                         std::chrono::system_clock::time_point response_time) {
+                         std::chrono::system_clock::time_point response_time,
+                         std::chrono::steady_clock::time_point schedule_time) {
     const auto path = OptionalString(object, "path");
     const auto *value = object.if_contains("value");
     if (!path.has_value() || path->empty()) {
@@ -486,6 +500,12 @@ private:
       return ProtocolError("set", request_id, kBadRequestNumber,
                            kBadRequestReason, "Missing or invalid value",
                            response_time);
+    }
+    if (advisory_ && IsQmAdvisoryRequestPath(*path) && value->is_string()) {
+      const auto decision = advisory_->Handle(access_, *path, AsString(value->as_string()), response_time, schedule_time);
+      if (decision.accepted) return {json::serialize(SuccessBase("set", request_id, response_time)), false};
+      return ProtocolError("set", request_id, kBadRequestNumber, kInvalidDataReason,
+                           decision.reason, response_time);
     }
     return ProtocolError("set", request_id, kBadRequestNumber,
                          kInvalidDataReason,
@@ -516,7 +536,7 @@ private:
                            kTooManyRequestsReason, "Subscription limit reached",
                            response_time);
     }
-    const auto snapshot = signal_store.Latest();
+    const auto snapshot = Snapshot(signal_store, response_time, schedule_time);
     if (!snapshot.has_value() ||
         SelectPoints(*snapshot, *path, filters.paths, access_).empty()) {
       return ProtocolError(
@@ -579,14 +599,16 @@ private:
 
   VissProtocolLimits limits_;
   VissSessionAccess access_;
+  std::shared_ptr<QmAdvisoryGateway> advisory_;
   VissProtocolMetrics metrics_;
   std::uint64_t next_subscription_id_ = 1;
   std::vector<Subscription> subscriptions_;
 };
 
 VissSessionProtocol::VissSessionProtocol(VissProtocolLimits limits,
-                                         VissSessionAccess access)
-    : impl_(std::make_unique<Impl>(limits, access)) {}
+                                         VissSessionAccess access,
+                                         std::shared_ptr<QmAdvisoryGateway> advisory)
+    : impl_(std::make_unique<Impl>(limits, access, std::move(advisory))) {}
 
 VissSessionProtocol::~VissSessionProtocol() = default;
 VissSessionProtocol::VissSessionProtocol(VissSessionProtocol &&) noexcept =

@@ -598,8 +598,10 @@ final class TelemetryView: NSView {
         // backend-synthetic result may turn into a vehicle advisory.
         guard dataState == "LIVE", let raw = (sample["advisory"] as? [String: String])?[team] else { return "Unavailable" }
         return ["UNAVAILABLE": "Unavailable", "NONE": "None",
+                "EXPIRED": "Expired",
                 "INSPECTION_RECOMMENDED": "Inspection recommended",
-                "SERVICE_REQUIRED": "Service required"][raw] ?? "Unavailable"
+                "TIRE_INSPECTION_RECOMMENDED": "Inspection recommended",
+                "TIRE_REPLACEMENT_RECOMMENDED": "Replacement recommended"][raw] ?? "Unavailable"
     }
     private func drawVehicle(_ ink: NSColor) {
         let steering = value("Chassis.Axle.Row1.SteeringAngle")

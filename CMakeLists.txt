@@ -83,6 +83,7 @@ if(CARLA_EGO_WITH_VISS)
   add_library(
     carla-ego-runtime-viss STATIC
     src/boost_json.cpp
+    src/qm_advisory.cpp
     src/viss_access.cpp
     src/viss_assignment_control.cpp
     src/viss_protocol.cpp
@@ -188,6 +189,13 @@ if(BUILD_TESTING)
   add_test(NAME chase_camera COMMAND chase-camera-test)
 
   if(CARLA_EGO_WITH_VISS)
+    add_executable(qm-advisory-test tests/qm_advisory_test.cpp)
+    target_link_libraries(qm-advisory-test PRIVATE carla-ego-runtime-viss)
+    target_include_directories(qm-advisory-test PRIVATE "${CARLA_EGO_BOOST_INCLUDE_DIR}")
+    target_compile_options(qm-advisory-test PRIVATE -UNDEBUG)
+    carla_ego_enable_warnings(qm-advisory-test)
+    add_test(NAME qm_advisory COMMAND qm-advisory-test)
+
     add_executable(viss-dashboard-test tests/viss_dashboard_test.cpp)
     target_link_libraries(viss-dashboard-test PRIVATE carla-ego-runtime-viss)
     target_include_directories(viss-dashboard-test PRIVATE "${CARLA_EGO_BOOST_INCLUDE_DIR}")
