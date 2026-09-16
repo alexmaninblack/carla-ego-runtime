@@ -82,6 +82,12 @@ int main() {
   available["ready"]=true;signals[ba]=json::serialize(available);signals[ta]=json::serialize(available);
   signals["Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus"] = json::serialize(gateway);
   assert(DashboardAdvisory(signals, true, false, observed) == "INSPECTION_RECOMMENDED");
+  signals.erase(ba);
+  assert(DashboardAdvisory(signals, true, false, observed) == "INSPECTION_RECOMMENDED");
+  available["supported"] = false; signals[ba] = json::serialize(available);
+  assert(DashboardAdvisory(signals, true, false, observed) == "INSPECTION_RECOMMENDED");
+  available["supported"] = true; signals[ba] = json::serialize(available);
+  assert(DashboardAdvisory(signals, true, false, observed + std::chrono::seconds(16)) == "INSPECTION_RECOMMENDED");
   assert(DashboardAdvisory(signals, false, false, observed) == "UNAVAILABLE");
   assert(DashboardAdvisory(signals, true, false, observed + std::chrono::seconds(31)) == "NOT_AVAILABLE");
   signals["Vehicle.OEM.TireHealth.Advisory.GatewayStatus"] = json::serialize(gateway);

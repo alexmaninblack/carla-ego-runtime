@@ -173,7 +173,9 @@ public:
       if(fields.size()!=3||Integer(fields.if_contains("schemaVersion"))!=1||!ready||!ready->is_bool())
         return {false,"INVALID_SCHEMA"};
       const auto observed=Timestamp(Text(fields,"observedAt"));
-      if(!observed||*observed<started_||*observed>now||now-*observed>15s)return {false,"STALE_REQUEST"};
+      // Display readiness is not a motion/update authorization. Tolerate the
+      // accepted demo clock skew; expiry still uses our own receipt clock.
+      if(!observed||*observed<started_||*observed>now+5s||now-*observed>15s)return {false,"STALE_REQUEST"};
       auto& target=endpoints_[static_cast<std::size_t>(availability-kAvailabilityPaths.begin())];
       if(target.support_observed && *observed<=*target.support_observed)return {false,"STALE_REQUEST"};
       target.support_observed=*observed;target.support_received=now;target.support_deadline=mono+15s;

@@ -173,15 +173,18 @@ class QualificationManeuver:
         steering = 0.0
         if self.kind == "brake":
             control = self.machine.step(speed, max(0, 70 - distance))
-        elif elapsed < 8:
+        elif elapsed < 5:
             control = ScenarioControl(min(.5, max(0, .16 + .04 * (35 - speed))), 0, "ACCELERATE", False)
-        elif elapsed < 26:
+        elif elapsed < 10:
             # Smooth bounded real steering, not slip-value injection.
-            steering = .5 * math.sin(2 * math.pi * (elapsed - 8) / 3)
+            # Stay below the lane follower's authority and finish on the
+            # straight segment. This changes motion, never model thresholds.
+            steering = .3 * math.sin(2 * math.pi * (elapsed - 5) / 3)
             control = ScenarioControl(min(.5, max(0, .16 + .04 * (35 - speed))),
                 .2 if speed > 42 else 0, "STEERING_SWEEP", False)
         else:
-            control = ScenarioControl(0, 1, "HOLD", speed <= .3 and elapsed >= 29)
+            # End on the known straight segment before its junction.
+            control = ScenarioControl(0, 1, "HOLD", speed <= .3 and elapsed >= 13)
         if control.brake > .1 and speed >= 10:
             self.braking_frames += 1
         return control, steering

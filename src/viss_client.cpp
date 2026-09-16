@@ -447,6 +447,9 @@ std::string StopObservation(const SignalValues &signals, bool live) {
 std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
                              std::chrono::system_clock::time_point now = std::chrono::system_clock::now()) {
   if (!live) return "UNAVAILABLE";
+  // Readiness describes the idle label. It cannot mask a still-valid,
+  // independently Gateway-confirmed warning during producer transition.
+  const auto idle_state = [&]() -> std::string {
   std::string idle="NOT_AVAILABLE";
   const auto availability=Value(signals,tire?"Vehicle.OEM.TireHealth.Advisory.Availability":"Vehicle.OEM.BrakeHealth.Advisory.Availability","");
   if(availability.empty())return idle;
@@ -462,6 +465,9 @@ std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
     if(!state.at("supported").as_bool()||*expires<=now)return "NOT_AVAILABLE";
     idle=state.at("ready").as_bool()?"MONITORING":state.at("everReady").as_bool()?"UNAVAILABLE":"WAITING_FOR_SERVICE";
   } catch(...) {return "UNAVAILABLE";}
+  return idle;
+  };
+  const auto idle = idle_state();
   const auto raw = Value(signals, tire ? "Vehicle.OEM.TireHealth.Advisory.GatewayStatus"
                                       : "Vehicle.OEM.BrakeHealth.Advisory.GatewayStatus", "");
   if(raw.empty())return idle;
@@ -493,7 +499,8 @@ std::string DashboardAdvisory(const SignalValues &signals, bool live, bool tire,
     if ((!tire && (recommendation != "INSPECTION_RECOMMENDED" || active_reason != "PREDICTED_BRAKE_DEGRADATION")) ||
         (tire && ((recommendation != "TIRE_INSPECTION_RECOMMENDED" && recommendation != "TIRE_REPLACEMENT_RECOMMENDED") || active_reason != "PREDICTED_TIRE_WEAR"))) return "UNAVAILABLE";
     const auto until = ParseIso8601Utc(AsString(status.at("activeUntil").as_string()));
-    if (!until || *until <= now || *until - *observed > std::chrono::seconds(30)) return "UNAVAILABLE";
+    if (!until || *until - *observed > std::chrono::seconds(30)) return "UNAVAILABLE";
+    if (*until <= now) return idle;
     // Gateway can reject a new request while an earlier confirmed lease remains
     // active. Render only its bounded active fields, not service intent.
     return recommendation;

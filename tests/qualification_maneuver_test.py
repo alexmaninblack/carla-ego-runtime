@@ -26,11 +26,11 @@ class ManeuverTests(unittest.TestCase):
             control, offset = maneuver.step(0, 0)
             self.assertTrue(0 <= control.throttle <= .5)
             self.assertTrue(0 <= control.brake <= 1)
-            self.assertLessEqual(abs(offset), .5)
+            self.assertLessEqual(abs(offset), .3)
             offsets.append(offset)
         self.assertTrue(control.completed)
-        self.assertGreater(max(offsets), .49)
-        self.assertLess(min(offsets), -.49)
+        self.assertGreater(max(offsets), .299)
+        self.assertLess(min(offsets), -.299)
 
     def test_invalid_observations_and_period_fail_closed(self):
         for period in (0, -1, math.nan, math.inf, .2):

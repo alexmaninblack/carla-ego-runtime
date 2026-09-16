@@ -58,6 +58,12 @@ int main() {
     heartbeat["extra"]=true;assert(!readiness.Handle(selected,path,Canonical(heartbeat),now+10s,mono+10s).accepted);
     readiness.ResetAssignment();
     assert(std::get<std::string>(readiness.Snapshot(now+10s,mono+10s).at(4).value).empty());
+    heartbeat.erase("extra");
+    heartbeat["observedAt"]=FormatIso8601Utc(now+20s+10ms);
+    assert(readiness.Handle(selected,path,Canonical(heartbeat),now+20s,mono+20s).accepted);
+    assert(!projection(now+35s,mono+35s).at("supported").as_bool());
+    heartbeat["observedAt"]=FormatIso8601Utc(now+30s+1ms);
+    assert(!readiness.Handle(selected,path,Canonical(heartbeat),now+25s,mono+25s).accepted);
   }
   QmAdvisoryGateway gateway(now - 1s);
   assert(gateway.Snapshot(now, mono).at(0).timestamp == FormatIso8601Utc(now));
