@@ -54,6 +54,8 @@ class AppliedControl:
     mode: str
     mode_generation: int
     reset_requested: bool = False
+    exercise_kind: Optional[str] = None
+    exercise_id: Optional[str] = None
 
 
 def _uint64(value: Any, name: str) -> int:
@@ -348,6 +350,7 @@ class ExternalControlState:
         self._mode_generation = 0
         self._orchestration_reset_supported = orchestration_reset_supported
         self._orchestration: Optional[Dict[str, Any]] = None
+        self._exercise: Optional[Dict[str, Any]] = None
         self._completed_frame: Optional[Dict[str, Any]] = None
         self._completed_at = 0.0
         self._metrics: Dict[str, int] = {
@@ -584,6 +587,13 @@ class ExternalControlState:
 
     def current_control(self, now: float) -> AppliedControl:
         with self._lock:
+            exercise = self._exercise
+            if exercise and exercise["state"] == "RUNNING":
+                reason = ("OPERATOR_STOP" if self._mode != "scenario" else
+                    "CONTROL_LEASE_EXPIRED" if now - exercise["lastPoll"] > 3 else
+                    "EXERCISE_TIMEOUT" if now - exercise["startedAt"] > 60 else None)
+                if reason:
+                    self._finish_exercise_locked("ABORTED", reason, {})
             if self._session_id is not None and self._last_heartbeat_at is not None:
                 if now - self._last_heartbeat_at > self._ownership_timeout:
                     self._metrics["ownership_timeouts"] += 1
@@ -609,7 +619,26 @@ class ExternalControlState:
                 mode=self._applied_mode(),
                 mode_generation=self._mode_generation,
                 reset_requested=self._consume_reset_locked(),
+                exercise_kind=exercise["kind"] if exercise and exercise["state"] == "RUNNING" else None,
+                exercise_id=exercise["id"] if exercise and exercise["state"] == "RUNNING" else None,
             )
+
+    def _finish_exercise_locked(self, state, reason, metrics):
+        if not self._exercise or self._exercise["state"] != "RUNNING":
+            return
+        self._exercise.update(state=state, reason=reason, metrics=dict(metrics))
+        self._mode = "safe_stop"
+        self._advance_mode_generation()
+        self._select_safe_stop("exercise_complete" if state == "COMPLETED" else "exercise_aborted")
+        self._orchestration["phase"] = "STOPPING"
+
+    def finish_exercise(self, identity, state, reason, metrics):
+        """Called by the single CARLA tick owner, not a client result claim."""
+        if state not in {"COMPLETED", "ABORTED"} or reason not in {"NONE", "COLLISION", "LEFT_DRIVING_LANE", "EXERCISE_TIMEOUT"}:
+            raise ValueError("invalid exercise result")
+        with self._lock:
+            if self._exercise and self._exercise["id"] == identity:
+                self._finish_exercise_locked(state, reason, metrics)
 
     def _consume_reset_locked(self) -> bool:
         operation = self._orchestration
@@ -623,6 +652,9 @@ class ExternalControlState:
         return {"status": "ok", "operationId": operation["id"] if operation else None,
                 "held": bool(operation and operation["held"]),
                 "phase": operation["phase"] if operation else "IDLE",
+                "exerciseSupported": True,
+                "exercise": ({key: self._exercise[key] for key in ("id", "kind", "state", "reason", "metrics")}
+                    if self._exercise else None),
                 "fresh": self._completed_frame is not None and 0 <= now - self._completed_at <= 0.25,
                 "frame": dict(self._completed_frame) if self._completed_frame else None}
 
@@ -640,6 +672,8 @@ class ExternalControlState:
             raise ControlProtocolError("bad_request", "invalid operation identity") from None
         action = _string(message, "operation")
         if action == "status":
+            if self._exercise and self._exercise["id"] == operation_id and self._exercise["state"] == "RUNNING":
+                self._exercise["lastPoll"] = now
             return self._orchestration_status_locked(now)
         current = self._orchestration
         if action == "safe_stop":
@@ -652,10 +686,14 @@ class ExternalControlState:
             self._select_safe_stop("orchestrator")
             self._orchestration = {"id": operation_id, "held": True, "phase": "STOPPING"}
             return self._orchestration_status_locked(now)
-        if action not in {"reset", "release", "manual_ready", "release_manual"}:
+        if action not in {"reset", "release", "manual_ready", "release_manual", "exercise_brake", "exercise_tire"}:
             raise ControlProtocolError("bad_request", "unsupported orchestration operation")
         if not current or current["id"] != operation_id:
             raise ControlProtocolError("orchestration_mismatch", "operation does not own safe stop")
+        if action.startswith("exercise_") and self._exercise and self._exercise["id"] == operation_id:
+            if self._exercise["kind"] != action.removeprefix("exercise_"):
+                raise ControlProtocolError("orchestration_mismatch", "exercise kind differs")
+            return self._orchestration_status_locked(now)
         if action in {"release", "release_manual"} and not current["held"]:
             return self._orchestration_status_locked(now)
         if not current["held"]:
@@ -677,7 +715,16 @@ class ExternalControlState:
                 not frame or frame["activeMode"] != "SAFE_STOP" or frame["speedKmh"] > 0.5 or
                 frame["brake"] < 0.99 or frame["controlGeneration"] != self._mode_generation):
             raise ControlProtocolError("safe_stop_not_confirmed", "completed stopped frame is required")
-        if action == "manual_ready":
+        if action.startswith("exercise_"):
+            if current["phase"] != "RESET" or not self._session_id:
+                raise ControlProtocolError("exercise_not_ready", "post-reset frame and native operator session required")
+            self._mode = "scenario"
+            self._advance_mode_generation()
+            self._safe_stop_reason = action
+            self._exercise = dict(id=operation_id, kind=action.removeprefix("exercise_"),
+                state="RUNNING", reason="NONE", metrics={}, startedAt=now, lastPoll=now)
+            current["phase"] = "EXERCISING"
+        elif action == "manual_ready":
             if current["phase"] != "RESET" or not self._session_id:
                 raise ControlProtocolError("manual_ready_not_confirmed", "post-reset frame and native operator session required")
             self._mode = "manual"

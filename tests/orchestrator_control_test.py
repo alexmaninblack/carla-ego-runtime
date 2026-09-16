@@ -10,6 +10,64 @@ OTHER = "031ae4e1-954f-45f4-bb67-0416f16bd431"
 
 
 class OrchestratorControlTests(unittest.TestCase):
+    def start_exercise(self, kind="brake"):
+        session = self.state.handle(dict(version=2, action="acquire", requestId="ui",
+            token="fixture-secret", clientId="native-ui"), 1)["sessionId"]
+        self.call("safe_stop")
+        self.observe()
+        self.call("reset", at=1.11)
+        self.state.current_control(1.12)
+        self.observe(at=1.15, reset=1)
+        self.call("exercise_" + kind, at=1.16)
+        return session
+
+    def test_exercise_repeat_never_restarts_motion(self):
+        self.start_exercise()
+        generation = self.state.current_control(1.17).mode_generation
+        self.assertEqual("RUNNING", self.call("exercise_brake", at=1.18)["exercise"]["state"])
+        self.assertEqual(generation, self.state.current_control(1.19).mode_generation)
+        self.state.finish_exercise(OP, "COMPLETED", "NONE", {"frames": 50})
+        self.assertEqual("COMPLETED", self.call("exercise_brake", at=1.2)["exercise"]["state"])
+        with self.assertRaises(ControlProtocolError):
+            self.call("release", at=1.2)
+        self.observe(at=1.21, reset=1)
+        self.assertEqual("RELEASED", self.call("release", at=1.22)["phase"])
+        self.assertTrue(self.state.current_control(1.23).safe_stop)
+
+    def test_exercise_requires_reset_native_session_and_owner(self):
+        self.call("safe_stop")
+        self.observe()
+        with self.assertRaises(ControlProtocolError): self.call("exercise_brake", at=1.11)
+        self.call("reset", at=1.12)
+        self.state.current_control(1.13)
+        self.observe(at=1.15, reset=1)
+        with self.assertRaises(ControlProtocolError): self.call("exercise_brake", at=1.16)
+        with self.assertRaises(ControlProtocolError): self.call("exercise_brake", at=1.16, identity=OTHER)
+
+    def test_exercise_lease_and_native_stop_abort(self):
+        session = self.start_exercise("tire")
+        self.state.handle(dict(version=2, action="set_mode", requestId="stop",
+            sessionId=session, mode="safe_stop"), 1.2)
+        self.assertTrue(self.state.current_control(1.21).safe_stop)
+        self.assertEqual("OPERATOR_STOP", self.call("status", at=1.22)["exercise"]["reason"])
+        self.setUp()
+        self.start_exercise()
+        self.assertTrue(self.state.current_control(4.2).safe_stop)
+        self.assertEqual("CONTROL_LEASE_EXPIRED", self.call("status", at=4.21)["exercise"]["reason"])
+
+    def test_other_status_cannot_renew_exercise_lease(self):
+        self.start_exercise()
+        self.call("status", at=3.9, identity=OTHER)
+        self.state.current_control(4.2)
+        self.assertEqual("ABORTED", self.call("status", at=4.21)["exercise"]["state"])
+
+    def test_collision_finishes_only_matching_exercise(self):
+        self.start_exercise()
+        self.state.finish_exercise(OTHER, "ABORTED", "COLLISION", {})
+        self.assertEqual("RUNNING", self.call("status", at=1.2)["exercise"]["state"])
+        self.state.finish_exercise(OP, "ABORTED", "COLLISION", {})
+        self.assertTrue(self.state.current_control(1.21).safe_stop)
+
     def manual_ready(self):
         session = self.state.handle(dict(version=2, action="acquire", requestId="ui",
             token="fixture-secret", clientId="native-ui"), 1)["sessionId"]

@@ -137,6 +137,60 @@ class ScenarioControl:
     completed: bool
 
 
+class QualificationManeuver:
+    """Bounded real-control exercises; no sensor/model/result substitution.
+
+    Brake reuses the existing scenario state machine against a distance-based
+    stop line (not a spawned obstacle). Tire uses alternating steering inputs.
+    The tick owner supplies actual speed/distance and enforces collision/lane
+    bounds. Completing this motion does not qualify a service model.
+    """
+
+    def __init__(self, kind: str, period: float):
+        if kind not in {"brake", "tire"}:
+            raise ValueError("unsupported qualification maneuver")
+        if not math.isfinite(period) or not 0 < period <= .1:
+            raise ValueError("invalid tick period")
+        self.kind = kind
+        self.period = period
+        self.frames = 0
+        self.maximum_speed = 0.0
+        self.braking_frames = 0
+        self.machine = BrakeScenarioStateMachine(dict(target_speed_kmh=30,
+            target_speed_tolerance_kmh=1, acceleration_throttle=.5,
+            speed_control_gain=.04, stabilization_seconds=1,
+            # The accepted Brake model requires >=50% effort for 200 ms.
+            # Exercise the real capture boundary; never lower the model gate.
+            brake_trigger_gap_m=25, brake_command=.5,
+            stopped_speed_kmh=.3, stopped_frames=12, hold_seconds=2), period)
+
+    def step(self, speed: float, distance: float):
+        if not math.isfinite(speed) or not math.isfinite(distance) or speed < 0 or distance < 0:
+            raise ValueError("invalid physical observation")
+        self.frames += 1
+        elapsed = self.frames * self.period
+        self.maximum_speed = max(self.maximum_speed, speed)
+        steering = 0.0
+        if self.kind == "brake":
+            control = self.machine.step(speed, max(0, 70 - distance))
+        elif elapsed < 8:
+            control = ScenarioControl(min(.5, max(0, .16 + .04 * (35 - speed))), 0, "ACCELERATE", False)
+        elif elapsed < 26:
+            # Smooth bounded real steering, not slip-value injection.
+            steering = .5 * math.sin(2 * math.pi * (elapsed - 8) / 3)
+            control = ScenarioControl(min(.5, max(0, .16 + .04 * (35 - speed))),
+                .2 if speed > 42 else 0, "STEERING_SWEEP", False)
+        else:
+            control = ScenarioControl(0, 1, "HOLD", speed <= .3 and elapsed >= 29)
+        if control.brake > .1 and speed >= 10:
+            self.braking_frames += 1
+        return control, steering
+
+    def metrics(self):
+        return dict(frames=self.frames, durationSeconds=round(self.frames * self.period, 3),
+            maximumSpeedKmh=round(self.maximum_speed, 3), brakingFramesAbove10Kmh=self.braking_frames)
+
+
 class BrakeScenarioStateMachine:
     def __init__(self, config: Dict[str, Any], fixed_delta_seconds: float):
         self.config = config

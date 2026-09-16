@@ -325,6 +325,12 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             world.tick(float(carla_config["timeout_seconds"]))
 
         traffic_manager = None
+        # The same collision sensor also bounds explicit democtl exercises in
+        # the ordinary scene. It does not manufacture or modify vehicle data.
+        if collision_sensor is None:
+            collision_sensor = world.spawn_actor(blueprint_library.find("sensor.other.collision"),
+                carla.Transform(), attach_to=vehicle)
+            collision_sensor.listen(lambda event: collision_frames.append(int(event.frame)))
         traffic_manager_port = None
         if autopilot_config is not None:
             traffic_manager_port = int(autopilot_config["traffic_manager_port"])
@@ -443,6 +449,9 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
         scenario_peak_deceleration = 0.0
         scenario_stop_gap: Optional[float] = None
         scenario_finished = False
+        qualification = None
+        qualification_id = None
+        qualification_distance = 0.0
 
         def scenario_record(
             result: str, failure_reasons: list[str], recorded_at: float
@@ -498,7 +507,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             )
             if mode_changed:
                 previous_mode = active_mode
-                reset_required = applied.mode == "scenario" or applied.reset_requested
+                reset_required = (applied.mode == "scenario" and applied.exercise_kind is None) or applied.reset_requested
                 facts_state.begin_transition(
                     applied.mode, applied.mode_generation, reset_required
                 )
@@ -531,7 +540,14 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     handover_started_at = None
                     handover_control = None
                     vehicle.set_autopilot(True, traffic_manager_port)
-                if applied.mode == "scenario":
+                if applied.exercise_kind is not None:
+                    # Demo Control already confirmed a stopped reset frame.
+                    qualification = BRAKE.QualificationManeuver(applied.exercise_kind, period)
+                    qualification_id = applied.exercise_id
+                    qualification_distance = total_distance_m
+                    collision_frames.clear()
+                    scenario_machine = None
+                elif applied.mode == "scenario":
                     if scenario_config is None or obstacle is None:
                         raise RuntimeError(
                             "scenario mode selected without a configured obstacle"
@@ -591,7 +607,25 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     ),
                 )
 
-            if active_mode == "scenario":
+            if applied.exercise_kind is not None and qualification is not None:
+                waypoint = carla_map.get_waypoint(vehicle.get_location(), project_to_road=True,
+                    lane_type=carla.LaneType.Driving)
+                failure = ("COLLISION" if collision_frames else "LEFT_DRIVING_LANE"
+                    if waypoint is None or vehicle.get_location().distance(waypoint.transform.location) > 5 else None)
+                if failure:
+                    control_state.finish_exercise(qualification_id, "ABORTED", failure, qualification.metrics())
+                    requested = carla.VehicleControl(throttle=0, brake=1, steer=0)
+                else:
+                    motion, offset = qualification.step(BRAKE.speed_kmh(vehicle),
+                        max(0, total_distance_m - qualification_distance))
+                    lookahead = BRAKE.choose_forward_waypoint(waypoint, 6)
+                    steering = BRAKE.steering_command(vehicle.get_transform(), lookahead.transform.location, .45)
+                    requested = carla.VehicleControl(throttle=motion.throttle, brake=motion.brake,
+                        steer=max(-.65, min(.65, steering + offset)))
+                    if motion.completed:
+                        control_state.finish_exercise(qualification_id, "COMPLETED", "NONE", qualification.metrics())
+                vehicle.apply_control(requested)
+            elif active_mode == "scenario":
                 if scenario_config is None or scenario_machine is None or obstacle is None:
                     raise RuntimeError("scenario mode is not initialized")
                 scenario_elapsed = (

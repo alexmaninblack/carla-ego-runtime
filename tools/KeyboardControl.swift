@@ -120,7 +120,9 @@ final class ControlView: NSView {
             brake = 0
             steering = 0
         } else if selected == "scenario" {
-            statusDetail = "SCRIPTED BRAKE SCENARIO — RUNNING"
+            statusDetail = reason == "exercise_tire"
+                ? "TIRE TEST MANEUVER — RUNNING"
+                : "SCRIPTED BRAKE SCENARIO — RUNNING"
             throttle = 0
             brake = 0
             steering = 0

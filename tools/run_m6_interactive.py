@@ -39,6 +39,31 @@ def request_stop(_signum: int, _frame: Any) -> None:
     STOP_REQUESTED.set()
 
 
+def viss_trust_options(arguments: argparse.Namespace) -> tuple:
+    """Keep the legacy profile explicit; strict mode never silently falls back."""
+    names = ("viss_client_ca", "viss_assignment_socket", "viss_assignment_generation",
+             "dashboard_certificate", "dashboard_private_key", "dashboard_certificate_sha256")
+    values = [getattr(arguments, name, None) for name in names]
+    if getattr(arguments, "viss_development", False):
+        if any(value is not None for value in values):
+            raise ValueError("mixed strict and development VISS configuration")
+        return ["--viss-development"], []
+    if any(value is None for value in values):
+        raise ValueError("strict VISS requires client CA, assignment and Dashboard credentials")
+    if type(arguments.viss_assignment_generation) is not int or not 0 <= arguments.viss_assignment_generation < 2**63:
+        raise ValueError("invalid VISS assignment generation")
+    import hashlib
+    import ssl
+    actual = hashlib.sha256(ssl.PEM_cert_to_DER_cert(arguments.dashboard_certificate.read_text())).hexdigest()
+    if actual != arguments.dashboard_certificate_sha256:
+        raise ValueError("Dashboard certificate does not match strict enrollment")
+    return ["--viss-strict-client-auth", "--viss-client-ca", str(arguments.viss_client_ca),
+        "--viss-assignment-socket", str(arguments.viss_assignment_socket),
+        "--viss-assignment-generation", str(arguments.viss_assignment_generation),
+        "--viss-dashboard-certificate-sha256", actual], ["--cert", str(arguments.dashboard_certificate),
+        "--key", str(arguments.dashboard_private_key)]
+
+
 def timeline_mark(path: Path, started_at: float, stage: str, **fields: Any) -> None:
     lock_path = path.with_suffix(path.suffix + ".lock")
     with lock_path.open("a", encoding="utf-8") as lock_file:
@@ -162,8 +187,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
     )
     runtime_command.extend(["--control-facts-socket", str(facts_socket_file),
                             "--simulator-run-id", run_id])
-    if getattr(arguments, "viss_development", False):
-        runtime_command.append("--viss-development")
+    runtime_trust, dashboard_credentials = viss_trust_options(arguments)
+    runtime_command.extend(runtime_trust)
     manifest: Dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_directory.name,
@@ -228,13 +253,15 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
 
         print("[3/6] Verifying secure VISS telemetry...", flush=True)
         if not M5.run_viss_probe(
-            arguments.viss_client, config, arguments.certificate, log, "start"
+            arguments.viss_client, config, arguments.certificate, log, "start",
+            client_credentials=dashboard_credentials
         ):
             raise RuntimeError("independent VISS start probe failed")
         timeline_mark(timeline_file, started_at, "viss_verified")
 
         print("[4/6] Preparing the native VSS telemetry feed...", flush=True)
         dashboard_command = M5.dashboard_command(arguments.viss_client, config, arguments.certificate)
+        dashboard_command.extend(dashboard_credentials)
         dashboard_command[dashboard_command.index("--monitor")] = "--monitor-json"
         if arguments.demo_journal:
             dashboard_command.extend(["--demo-journal", str(arguments.demo_journal)])
@@ -280,7 +307,8 @@ def run(arguments: argparse.Namespace, config: Dict[str, Any]) -> bool:
         dashboard_health = {"presentation": "native", "owner": "keyboard_ui",
                             "sampleRecording": False}
         if not M5.run_viss_probe(
-            arguments.viss_client, config, arguments.certificate, log, "end"
+            arguments.viss_client, config, arguments.certificate, log, "end",
+            client_credentials=dashboard_credentials
         ):
             raise RuntimeError("independent VISS end probe failed")
         runtime_exit = runtime.stop(allow_kill=False)
@@ -359,6 +387,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--started-timestamp", required=True, type=float)
     parser.add_argument("--viss-development", action="store_true",
                         help="explicit local server-TLS profile; no client mTLS")
+    parser.add_argument("--viss-client-ca", type=Path)
+    parser.add_argument("--viss-assignment-socket", type=Path)
+    parser.add_argument("--viss-assignment-generation", type=int)
+    parser.add_argument("--dashboard-certificate", type=Path)
+    parser.add_argument("--dashboard-private-key", type=Path)
+    parser.add_argument("--dashboard-certificate-sha256")
     return parser.parse_args()
 
 
@@ -367,6 +401,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, request_stop)
     arguments = parse_arguments()
     try:
+        viss_trust_options(arguments)
         config = CONTROLLER.load_config(arguments.config)
         if config["controller"]["type"] != "external_control":
             raise ValueError("M6.2 requires controller.type=external_control")

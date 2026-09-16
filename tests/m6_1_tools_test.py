@@ -34,7 +34,8 @@ class M61ToolTests(unittest.TestCase):
     def test_native_advisory_uses_only_allowlisted_dashboard_contract_and_fails_closed(self):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
         self.assertIn('guard dataState == "LIVE", let raw = (sample["advisory"] as? [String: String])?[team]', source)
-        self.assertIn('"SERVICE_REQUIRED": "Service required"', source)
+        self.assertIn('"INSPECTION_RECOMMENDED": "Inspection recommended"', source)
+        self.assertIn('"TIRE_REPLACEMENT_RECOMMENDED": "Replacement recommended"', source)
         self.assertIn('dataRow("Brake", advisory("brake")', source)
         self.assertIn('dataRow("Tire", advisory("tire")', source)
         self.assertIn('][raw] ?? "Unavailable"', source)

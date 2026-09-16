@@ -350,7 +350,7 @@ def public_runtime_options(command: List[str]) -> List[str]:
         if skip_next:
             skip_next = False
             continue
-        if argument in {"--viss-cert", "--viss-key"}:
+        if argument in {"--viss-cert", "--viss-key", "--viss-client-ca"}:
             redacted.extend([argument, "<redacted-local-path>"])
             skip_next = True
         else:
@@ -360,7 +360,7 @@ def public_runtime_options(command: List[str]) -> List[str]:
 
 def run_viss_probe(
     client: Path, config: Dict[str, Any], certificate: Path,
-    log: StructuredLog, phase: str
+    log: StructuredLog, phase: str, *, client_credentials: Optional[List[str]] = None
 ) -> bool:
     runtime = config["runtime"]
     if phase == "start":
@@ -398,6 +398,7 @@ def run_viss_probe(
         "--messages", message_count,
         "--request", request,
     ]
+    command.extend(client_credentials or [])
     result = subprocess.run(
         command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         timeout=20
