@@ -115,11 +115,40 @@ class OrchestratorControlTests(unittest.TestCase):
         self.call("release_manual", at=1.21)
         self.assertTrue(self.state.current_control(2.1).safe_stop)
 
-    def test_manual_ready_requires_reset_and_native_session(self):
+    def test_manual_ready_requires_native_session(self):
         self.call("safe_stop")
         self.observe()
         with self.assertRaises(ControlProtocolError):
             self.call("manual_ready", at=1.11)
+
+    def test_first_enrollment_preserves_actor_reset_generation_and_requires_fresh_stop(self):
+        self.state.handle(dict(version=2, action="acquire", requestId="ui",
+            token="fixture-secret", clientId="native-ui"), 1)
+        self.call("safe_stop")
+        self.observe(speed=10)
+        with self.assertRaises(ControlProtocolError):
+            self.call("manual_ready", at=1.11)
+        self.observe(at=1.12, brake=.5)
+        with self.assertRaises(ControlProtocolError):
+            self.call("manual_ready", at=1.13)
+        self.observe(at=1.14)
+        with self.assertRaises(ControlProtocolError):
+            self.call("manual_ready", at=1.8)
+        self.observe(at=1.81)
+        value = self.call("manual_ready", at=1.82)
+        self.assertEqual("MANUAL_PREPARING", value["phase"])
+        self.assertEqual(0, value["frame"]["resetGeneration"])
+        self.assertEqual(1, value["frame"]["egoActorId"])
+        with self.assertRaises(ControlProtocolError):
+            self.call("release_manual", at=1.83)
+        self.frame += 1
+        self.state.observe_completed_frame(now=1.84, run_id="fixture-run", ego_actor_id=1,
+            frame_id=self.frame, simulation_time=self.frame * .05, active_mode="manual",
+            control_generation=self.state.current_control(1.84).mode_generation,
+            reset_generation=0, speed_kmh=0, brake=1)
+        released = self.call("release_manual", at=1.85)
+        self.assertEqual("RELEASED", released["phase"])
+        self.assertEqual(0, released["frame"]["resetGeneration"])
 
     def setUp(self):
         self.state = ExternalControlState("fixture-secret", 0.25, 1.0)

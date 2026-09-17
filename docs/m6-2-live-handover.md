@@ -60,6 +60,11 @@ cadence avoids the resulting long frames.
 
 - Client disconnect, ownership heartbeat expiry, panel close, and shutdown
   always disable autopilot and select safe stop.
+- On selecting Manual, the controller holds full brake for the first command
+  and starts the 250 ms budget at that selection, not before it. The bridge
+  distinguishes this bounded wait from a real timeout. Explicit Manual
+  selection after a timeout re-arms that first-command wait; it never replays
+  an old pedal value. Simulator tick delays do not own the control socket.
 - Manual commands expire after 250 ms; heartbeats cannot keep an old manual
   command active.
 - Autopilot still requires the 1,000 ms ownership heartbeat, but does not

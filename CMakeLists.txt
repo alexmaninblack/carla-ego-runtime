@@ -276,6 +276,10 @@ if(BUILD_TESTING)
       NAME orchestrator_control
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/orchestrator_control_test.py"
     )
+    add_test(NAME keyboard_bridge_recovery
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/keyboard_bridge_recovery_test.py")
+    add_test(NAME m6_gateway_trust
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_trust_test.py")
     add_test(
       NAME m6_tools
       COMMAND

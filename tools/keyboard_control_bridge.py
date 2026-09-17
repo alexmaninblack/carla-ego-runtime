@@ -13,7 +13,20 @@ from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS.parent))
-from tools.external_control_client import ControlConnection  # noqa: E402
+from tools.external_control_client import ControlConnection, ControlRequestRejected  # noqa: E402
+
+
+def manual_command(connection, value):
+    """A rejected input must stop motion, not permanently strand the UI."""
+    try:
+        connection.command(float(value["throttle"]), float(value["brake"]), float(value["steering"]))
+        return True
+    except ControlRequestRejected as error:
+        if error.code not in ("invalid_command", "invalid_mode", "invalid_sequence", "orchestration_busy"):
+            raise
+        connection.set_mode("safe_stop")
+        emit("mode_changed", mode="safe_stop", reason="command_rejected")
+        return False
 
 
 def emit(event: str, **fields: object) -> None:
@@ -25,6 +38,16 @@ def emit(event: str, **fields: object) -> None:
         ),
         flush=True,
     )
+
+
+def observed_mode(current_mode, heartbeat):
+    # Physical control stays stopped during the bounded first-command wait.
+    # Do not cancel the selected Manual mode before the UI can send that
+    # command. A real timeout, hold or operator stop still wins immediately.
+    if (current_mode == "manual" and heartbeat.get("reason") == "awaiting_command"
+            and heartbeat.get("held") is not True):
+        return current_mode
+    return str(heartbeat.get("mode", current_mode))
 
 
 def main() -> int:
@@ -63,22 +86,19 @@ def main() -> int:
                         connection.set_mode(mode)
                         current_mode = mode
                         emit("mode_changed", mode=mode)
-                    except RuntimeError as error:
+                    except ControlRequestRejected as error:
                         emit("mode_rejected", mode=mode, error=str(error))
                 elif action == "exit":
                     connection.set_mode("safe_stop")
                     current_mode = "safe_stop"
                     exiting = True
                 elif current_mode == "manual" and not orchestration_held:
-                    connection.command(
-                        float(value["throttle"]),
-                        float(value["brake"]),
-                        float(value["steering"]),
-                    )
+                    if not manual_command(connection, value):
+                        current_mode = "safe_stop"
             if time.monotonic() >= next_heartbeat and not exiting:
                 heartbeat = connection.heartbeat()
                 orchestration_held = heartbeat.get("held") is True
-                server_mode = str(heartbeat.get("mode", current_mode))
+                server_mode = observed_mode(current_mode, heartbeat)
                 if server_mode != current_mode:
                     current_mode = server_mode
                     emit(

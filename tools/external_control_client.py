@@ -28,9 +28,17 @@ def emit(event: str, **fields: Any) -> None:
     )
 
 
+class ControlRequestRejected(RuntimeError):
+    """A complete protocol rejection, distinct from a lost connection."""
+
+    def __init__(self, response: Dict[str, Any]):
+        self.code = str(response.get("error", {}).get("code", "unknown"))
+        super().__init__(f"control request rejected: {self.code}")
+
+
 def require_ok(response: Dict[str, Any]) -> Dict[str, Any]:
     if response.get("status") != "ok":
-        raise RuntimeError(f"control request failed: {response}")
+        raise ControlRequestRejected(response)
     return response
 
 

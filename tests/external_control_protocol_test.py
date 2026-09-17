@@ -222,6 +222,33 @@ class ExternalControlStateTests(unittest.TestCase):
             command(self.state, session, 1, 1.3, throttle=0.2)
         self.assertEqual(automatic.exception.code, "invalid_mode")
 
+    def test_manual_first_command_has_full_budget_without_releasing_brake(self):
+        session = acquire_v3(self.state)["sessionId"]
+        set_mode(self.state, session, "manual", 1.1)
+        for instant in (1.116, 1.2, 1.349):
+            applied = self.state.current_control(instant)
+            self.assertEqual(applied.reason, "awaiting_command")
+            self.assertEqual((applied.throttle, applied.brake), (0, 1))
+            self.assertTrue(applied.safe_stop)
+        self.assertEqual(self.state.snapshot()["command_timeouts"], 0)
+        command(self.state, session, 1, 1.349, throttle=.2)
+        self.assertEqual(self.state.current_control(1.35).mode, "manual")
+
+    def test_missing_first_command_still_times_out_and_heartbeat_does_not_extend_it(self):
+        session = acquire_v3(self.state)["sessionId"]
+        set_mode(self.state, session, "manual", 1.1)
+        self.state.handle(dict(version=3, action="heartbeat", requestId="h",
+                               sessionId=session), 1.34)
+        applied = self.state.current_control(1.351)
+        self.assertEqual(applied.reason, "command_timeout")
+        self.assertEqual((applied.throttle, applied.brake), (0, 1))
+        self.assertEqual(self.state.snapshot()["command_timeouts"], 1)
+
+        set_mode(self.state, session, "manual", 1.4)
+        self.assertEqual(self.state.current_control(1.416).reason, "awaiting_command")
+        command(self.state, session, 1, 1.45, throttle=.2)
+        self.assertEqual(self.state.current_control(1.46).mode, "manual")
+
     def test_mode_selection_is_idempotent_and_sequence_never_rewinds(self):
         session = acquire_v2(self.state)
         set_mode(self.state, session, "manual", 1.1)

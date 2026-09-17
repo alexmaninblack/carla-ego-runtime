@@ -189,8 +189,10 @@ final class ControlView: NSView {
             let braking = pressed.contains(125)
             let throttleTarget = pressed.contains(126) && !braking ? 0.55 : 0.0
             let brakeTarget = braking ? 0.75 : 0.0
-            throttle = braking ? 0 : approach(throttle, throttleTarget, 1.25 * elapsed)
             brake = approach(brake, brakeTarget, 3.0 * elapsed)
+            // The protocol forbids overlapping pedals, including the release
+            // ramp after the operator has already let go of the brake key.
+            throttle = braking || brake > 0 ? 0 : approach(throttle, throttleTarget, 1.25 * elapsed)
             let steeringTarget: Double
             if pressed.contains(123) && !pressed.contains(124) {
                 steeringTarget = -0.55
@@ -1006,7 +1008,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func selectMode(_ mode: String) {
-        guard !closing, view.connected else { return }
+        guard !closing else { return }
+        if !view.connected {
+            // Explicit operator recovery only. Reacquire stopped; never replay
+            // the requested driving mode or buffered pedal commands.
+            if process == nil {
+                outputBuffer = ""
+                view.statusDetail = "RECONNECTING — THEN SELECT A DRIVING MODE"
+                view.needsDisplay = true
+                startBridge()
+            }
+            return
+        }
         view.requestingMode(mode)
         writePayload(["action": "set_mode", "mode": mode])
     }

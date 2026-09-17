@@ -511,7 +511,8 @@ class ExternalControlState:
                     "mode_unavailable", f"{mode} mode is not configured"
                 )
             previous_mode = self._mode
-            if mode == previous_mode and mode != "scenario":
+            if (mode == previous_mode and mode != "scenario"
+                    and not (mode == "manual" and self._safe_stop_reason == "command_timeout")):
                 self._last_heartbeat_at = now
                 return {
                     "status": "ok",
@@ -527,6 +528,10 @@ class ExternalControlState:
             self._last_heartbeat_at = now
             if mode == "manual":
                 self._select_safe_stop("awaiting_command")
+                # Start the first-command budget at mode selection. Keep full
+                # brake until a real command arrives, but do not time out on
+                # the next simulation tick merely because no command exists.
+                self._last_command_at = now
                 self._metrics["manual_activations"] += 1
             elif mode == "autopilot":
                 self._command = dict(SAFE_CONTROL)
@@ -725,8 +730,14 @@ class ExternalControlState:
                 state="RUNNING", reason="NONE", metrics={}, startedAt=now, lastPoll=now)
             current["phase"] = "EXERCISING"
         elif action == "manual_ready":
-            if current["phase"] != "RESET" or not self._session_id:
-                raise ControlProtocolError("manual_ready_not_confirmed", "post-reset frame and native operator session required")
+            # First enrollment preserves the actor/scene. Keep the same actual
+            # stopped-frame gate as reset/release above, and the native owner.
+            # This does not accept STOPPING, motion, stale frames or old modes.
+            if (current["phase"] not in {"SAFE_STOP", "RESET"} or not result["fresh"]
+                    or not self._session_id or not frame or frame["activeMode"] != "SAFE_STOP"
+                    or frame["speedKmh"] > .5 or frame["brake"] < .99
+                    or frame["controlGeneration"] != self._mode_generation):
+                raise ControlProtocolError("manual_ready_not_confirmed", "fresh stopped frame and native operator session required")
             self._mode = "manual"
             self._advance_mode_generation()
             self._command = dict(SAFE_CONTROL)
