@@ -92,6 +92,38 @@ int main() {
         "contradictory wheel angles unavailable");
   Check(EquivalentFrontAxleAngleDegrees(90.0, 10.0) == std::nullopt,
         "impossible wheel angle unavailable");
+  Check(EquivalentFrontAxleAngleDegrees(0.0, 0.0) == 0.0,
+        "zero wheel angles remain zero");
+  Check(EquivalentFrontAxleAngleDegrees(0.0, 10.0) == 0.0,
+        "one zero wheel retains the harmonic-mean limit");
+  for (double angle : {1.0e-11, -1.0e-11, 1.0e-14, -1.0e-14,
+                       1.0e-40, -1.0e-40}) {
+    const auto equivalent = EquivalentFrontAxleAngleDegrees(angle, angle);
+    Check(equivalent.has_value(), "tiny same-direction angles are available");
+    if (equivalent.has_value()) {
+      Check(std::abs((*equivalent - angle) / angle) < 1.0e-12,
+            "tiny physical angle is retained, not fabricated as zero");
+    }
+  }
+  Check(!EquivalentFrontAxleAngleDegrees(1.0e-200, -1.0e-200),
+        "opposite signs cannot disappear through multiplication underflow");
+  Check(!EquivalentFrontAxleAngleDegrees(0.0002, -0.0001),
+        "sub-millidegree contradictory pair still unavailable");
+  for (double left : {0.0001, 0.1, 1.0, 30.0, 89.9}) {
+    for (double right : {0.0002, 0.2, 2.0, 40.0, 89.8}) {
+      constexpr double radians = 3.14159265358979323846 / 180.0;
+      const double expected = std::atan(2.0 / (1.0 / std::tan(left * radians) +
+                                               1.0 / std::tan(right * radians))) / radians;
+      for (double sign : {-1.0, 1.0}) {
+        const auto equivalent = EquivalentFrontAxleAngleDegrees(sign * left, sign * right);
+        Check(equivalent.has_value(), "finite same-direction pair available");
+        if (equivalent.has_value()) {
+          CheckNear(*equivalent, sign * expected, 1.0e-12,
+                    "scaled calculation preserves accepted Ackermann equivalence");
+        }
+      }
+    }
+  }
 
   auto invalid = ValidSample();
   invalid.throttle_command = 1.01;

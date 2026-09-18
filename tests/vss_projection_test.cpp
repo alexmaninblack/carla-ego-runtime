@@ -251,6 +251,25 @@ int main() {
             "1970-01-01T00:00:01.134Z",
         "retained GNSS cannot be made fresh by new frame acquisition");
 
+  state.equivalent_front_axle_angle_iso_deg =
+      EquivalentFrontAxleAngleDegrees(1.0e-14, 1.0e-14);
+  const auto tiny_steering = ProjectToVss(state);
+  const auto *tiny_point =
+      Find(tiny_steering, "Vehicle.Chassis.Axle.Row1.SteeringAngle");
+  Check(tiny_point != nullptr, "valid tiny steering survives VSS projection");
+  if (tiny_point != nullptr) {
+    Check(std::get<double>(tiny_point->value) > 0.0,
+          "tiny steering is not fabricated as zero");
+    Check(tiny_point->timestamp == tiny_steering.timestamp,
+          "normalization preserves acquisition time");
+  }
+  state.equivalent_front_axle_angle_iso_deg =
+      EquivalentFrontAxleAngleDegrees(0.0002, -0.0001);
+  const auto contradictory_steering = ProjectToVss(state);
+  Check(Find(contradictory_steering,
+             "Vehicle.Chassis.Axle.Row1.SteeringAngle") == nullptr,
+        "contradictory tiny steering remains omitted, without a last-good value");
+
   state.engine_rpm.reset();
   state.equivalent_front_axle_angle_iso_deg.reset();
   const auto missing = ProjectToVss(state);

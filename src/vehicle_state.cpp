@@ -1,5 +1,6 @@
 #include "carla_ego_runtime/vehicle_state.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -72,26 +73,28 @@ std::optional<double> EquivalentFrontAxleAngleDegrees(
     return std::nullopt;
   }
 
-  constexpr double kEpsilon = 1.0e-12;
-  if (std::abs(front_left_iso_deg) < kEpsilon &&
-      std::abs(front_right_iso_deg) < kEpsilon) {
-    return 0.0;
-  }
-  if (front_left_iso_deg * front_right_iso_deg < 0.0) {
+  // Test signs without multiplication: a product of very small non-zero
+  // angles can underflow and must not admit a contradictory physical pair.
+  if (front_left_iso_deg != 0.0 && front_right_iso_deg != 0.0 &&
+      std::signbit(front_left_iso_deg) != std::signbit(front_right_iso_deg)) {
     return std::nullopt;
+  }
+  if (front_left_iso_deg == 0.0 || front_right_iso_deg == 0.0) {
+    return 0.0;
   }
 
   const double left_tangent =
       std::tan(front_left_iso_deg * kPi / 180.0);
   const double right_tangent =
       std::tan(front_right_iso_deg * kPi / 180.0);
-  const double denominator = left_tangent + right_tangent;
-  if (std::abs(denominator) < kEpsilon) {
-    return std::nullopt;
-  }
-
-  const double equivalent_tangent =
-      2.0 * left_tangent * right_tangent / denominator;
+  // The same harmonic mean, scaled to avoid a small product and a
+  // dimensionally unrelated epsilon on the radian tangent denominator.
+  // This preserves small valid angles; it is not a straight-ahead deadband.
+  const double small = std::min(std::abs(left_tangent), std::abs(right_tangent));
+  const double large = std::max(std::abs(left_tangent), std::abs(right_tangent));
+  const double equivalent_tangent = std::copysign(
+      small == 0.0 ? 0.0 : small / (0.5 + 0.5 * (small / large)),
+      front_left_iso_deg);
   return std::atan(equivalent_tangent) * 180.0 / kPi;
 }
 
