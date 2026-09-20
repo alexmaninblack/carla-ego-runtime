@@ -44,7 +44,7 @@ class M61ToolTests(unittest.TestCase):
         source = (REPOSITORY / "tools" / "KeyboardControl.swift").read_text()
         self.assertIn('awaitingOperator = selected == "manual" && reason == "manual_ready"', source)
         self.assertIn('brake = awaitingOperator ? 1 : 0', source)
-        self.assertLess(source.index('if awaitingOperator { return }'), source.index('if mode == "manual" && !(window?'))
+        self.assertLess(source.index('if awaitingOperator || sceneBusy { return }'), source.index('if mode == "manual" && !(window?'))
         self.assertIn('view.mode == "manual" && !view.awaitingOperator', source)
         self.assertIn('mode == "manual" && !awaitingOperator { pressed.insert', source)
 
@@ -143,6 +143,28 @@ class M61ToolTests(unittest.TestCase):
         self.assertIn('elif current_mode == "manual" and not orchestration_held:', source)
         self.assertIn("protocol_version=3", source)
         self.assertIn('server_mode != current_mode', source)
+
+    def test_scene_helper_is_a_separate_trusted_argv_not_shell_suffix(self):
+        import json
+        arguments=type("Arguments",(),dict(python=Path("python"),keyboard_ui=Path("KeyboardControl"),
+            connectivity_command=json.dumps(["/fixture/democtl","vehicle","connectivity"]),
+            scene_command=json.dumps(["/fixture/democtl","simulation"])))()
+        command=RUNNER.keyboard_command(arguments,Path("run/socket"),Path("run/token"),["/fixture/monitor"])
+        self.assertEqual(["/fixture/democtl","simulation"],json.loads(command[4]))
+        arguments.scene_command='{"shell":"arbitrary"}'
+        with self.assertRaises(ValueError):RUNNER.keyboard_command(arguments,Path("s"),Path("t"),["monitor"])
+        source=(REPOSITORY/"tools/KeyboardControl.swift").read_text()
+        self.assertIn('view.pressed.removeAll()',source)
+        self.assertIn('if awaitingOperator || sceneBusy { return }',source)
+        self.assertIn('["return-to-road","--target","test"]',source)
+        self.assertIn('sceneProcess == nil',source)
+        self.assertIn('scenePendingKind',source)
+
+    def test_scene_completion_reconciles_the_banner_from_confirmed_receipt(self):
+        source = (REPOSITORY / "tools/KeyboardControl.swift").read_text()
+        completion = source.split('func requestScene(', 1)[1].split('func startTelemetry()', 1)[0]
+        self.assertIn('confirmedSceneMode(result, kind: kind)', completion)
+        self.assertIn('self.view.setMode(mode.mode, reason: mode.reason)', completion)
 
     def test_native_keyboard_app_paths_are_launcher_owned(self):
         source = (REPOSITORY / "tools" / "launch_m6_1.py").read_text()

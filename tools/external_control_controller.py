@@ -30,6 +30,7 @@ TOOLS = Path(__file__).resolve().parent
 M5 = load_module("m6_m5_helpers", TOOLS / "behavior_agent_controller.py")
 PROTOCOL = load_module("m6_control_protocol", TOOLS / "external_control_protocol.py")
 BRAKE = load_module("m6_brake_scenario", TOOLS / "brake_event_scenario.py")
+ROAD = load_module("m6_road_recovery", TOOLS / "road_recovery.py")
 STOP_REQUESTED = False
 
 
@@ -361,6 +362,7 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             validate_mode,
             available_modes,
             orchestration_reset_supported=scenario_config is None,
+            road_recovery_supported=scenario_config is None,
         )
         server = PROTOCOL.LocalControlServer(
             arguments.socket_file,
@@ -508,6 +510,11 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
             if mode_changed:
                 previous_mode = active_mode
                 reset_required = (applied.mode == "scenario" and applied.exercise_kind is None) or applied.reset_requested
+                reset_rejection = (ROAD.placement_rejection(world,carla_map,carla,vehicle,spawn_points[start_index])
+                                   if applied.reset_requested else None)
+                if reset_rejection:
+                    control_state.reject_reset(reset_rejection)
+                    reset_required = False
                 facts_state.begin_transition(
                     applied.mode, applied.mode_generation, reset_required
                 )
@@ -576,14 +583,18 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                     # reset, without selecting Scenario or enabling driving.
                     if applied.mode != "safe_stop" or scenario_config is not None:
                         raise RuntimeError("standalone reset requires the plain stopped scene")
-                    reset_scenario_vehicle(carla, vehicle, spawn_points[start_index])
-                    last_location = vehicle.get_location()
-                    collision_frames.clear()
+                    if not reset_rejection:
+                        reset_scenario_vehicle(carla, vehicle, spawn_points[start_index])
+                        last_location = vehicle.get_location()
+                        collision_frames.clear()
                     handover_started_at = None
                     handover_control = None
                 active_mode = applied.mode
                 active_mode_generation = applied.mode_generation
                 pending_facts_transition = (active_mode, reset_required)
+                if reset_rejection:
+                    facts_state.fail_transition()
+                    pending_facts_transition = None
                 emit(
                     "drive_mode_applied",
                     previous_mode=previous_mode,
@@ -751,13 +762,16 @@ def run_controller(arguments: argparse.Namespace, config: Dict[str, Any]) -> int
                 velocity.x**2 + velocity.y**2 + velocity.z**2
             )
             maximum_speed_kmh = max(maximum_speed_kmh, current_speed_kmh)
+            road_ready = False
+            if control_state.reset_placement_pending():
+                road_ready = ROAD.placement_rejection(world,carla_map,carla,vehicle,vehicle.get_transform()) is None
             control_state.observe_completed_frame(
                 now=time.monotonic(), run_id=arguments.run_id, ego_actor_id=int(vehicle.id),
                 frame_id=completed_frame_id,
                 simulation_time=float(completed_snapshot.timestamp.elapsed_seconds),
                 active_mode=active_mode, control_generation=facts_state.control_generation,
                 reset_generation=facts_state.reset_generation, speed_kmh=current_speed_kmh,
-                brake=float(vehicle.get_control().brake))
+                brake=float(vehicle.get_control().brake),road_ready=road_ready)
             if (
                 active_mode == "scenario"
                 and scenario_config is not None

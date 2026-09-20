@@ -293,6 +293,11 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/m6_1_tools_test.py"
     )
     add_test(
+      NAME native_scene_mode
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_scene_mode_test.py"
+    )
+    add_test(
       NAME m6_2_handover
       COMMAND
         "${Python3_EXECUTABLE}"

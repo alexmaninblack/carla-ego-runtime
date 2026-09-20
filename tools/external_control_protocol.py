@@ -320,6 +320,7 @@ class ExternalControlState:
         mode_validator: Optional[Callable[[str], Optional[str]]] = None,
         available_modes: Optional[set[str]] = None,
         orchestration_reset_supported: bool = True,
+        road_recovery_supported: bool = False,
     ):
         if not token:
             raise ValueError("token must not be empty")
@@ -349,6 +350,7 @@ class ExternalControlState:
         self._mode = "safe_stop"
         self._mode_generation = 0
         self._orchestration_reset_supported = orchestration_reset_supported
+        self._road_recovery_supported = road_recovery_supported
         self._orchestration: Optional[Dict[str, Any]] = None
         self._exercise: Optional[Dict[str, Any]] = None
         self._completed_frame: Optional[Dict[str, Any]] = None
@@ -658,6 +660,8 @@ class ExternalControlState:
                 "held": bool(operation and operation["held"]),
                 "phase": operation["phase"] if operation else "IDLE",
                 "exerciseSupported": True,
+                "roadRecoverySupported": self._road_recovery_supported,
+                "resetError": operation.get("resetError") if operation else None,
                 "exercise": ({key: self._exercise[key] for key in ("id", "kind", "state", "reason", "metrics")}
                     if self._exercise else None),
                 "fresh": self._completed_frame is not None and 0 <= now - self._completed_at <= 0.25,
@@ -703,7 +707,7 @@ class ExternalControlState:
             return self._orchestration_status_locked(now)
         if not current["held"]:
             raise ControlProtocolError("orchestration_mismatch", "operation already released")
-        if action == "reset" and current["phase"] in {"RESETTING", "RESET"}:
+        if action == "reset" and current["phase"] in {"RESETTING", "RESET", "RESET_FAILED"}:
             return self._orchestration_status_locked(now)
         if action == "manual_ready" and current["phase"] in {"MANUAL_PREPARING", "MANUAL_READY"}:
             return self._orchestration_status_locked(now)
@@ -716,7 +720,7 @@ class ExternalControlState:
                 raise ControlProtocolError("manual_ready_not_confirmed", "completed stationary manual frame and native operator session required")
             current.update(held=False, phase="RELEASED")
             return self._orchestration_status_locked(now)
-        if (current["phase"] not in {"SAFE_STOP", "RESET"} or not result["fresh"] or
+        if (current["phase"] not in ({"SAFE_STOP", "RESET", "RESET_FAILED"} if action == "release" else {"SAFE_STOP", "RESET"}) or not result["fresh"] or
                 not frame or frame["activeMode"] != "SAFE_STOP" or frame["speedKmh"] > 0.5 or
                 frame["brake"] < 0.99 or frame["controlGeneration"] != self._mode_generation):
             raise ControlProtocolError("safe_stop_not_confirmed", "completed stopped frame is required")
@@ -755,10 +759,24 @@ class ExternalControlState:
             current.update(held=False, phase="RELEASED")
         return self._orchestration_status_locked(now)
 
+    def reset_placement_pending(self) -> bool:
+        with self._lock:
+            return bool(self._road_recovery_supported and self._orchestration and
+                        self._orchestration["held"] and self._orchestration["phase"] in {"RESETTING", "RESET"})
+
+    def reject_reset(self, reason: str) -> None:
+        """Tick-owner rejection; no successful reset generation is fabricated."""
+        if reason not in {"ROAD_POSITION_INVALID", "ROAD_POSITION_OCCUPIED", "ROAD_POSITION_UNCONFIRMED"}:
+            raise ValueError("invalid reset rejection")
+        with self._lock:
+            current = self._orchestration
+            if current and current["held"] and current["phase"] in {"RESETTING", "RESET"}:
+                current.update(phase="RESET_FAILED", resetPending=False, resetError=reason)
+
     def observe_completed_frame(self, *, now: float, run_id: str, ego_actor_id: int,
                                 frame_id: int, simulation_time: float, active_mode: str,
                                 control_generation: int, reset_generation: int,
-                                speed_kmh: float, brake: float) -> None:
+                                speed_kmh: float, brake: float, road_ready: bool = False) -> None:
         """Called only by the tick owner after a real completed CARLA frame."""
         if not all(math.isfinite(value) for value in (now, simulation_time, speed_kmh, brake)):
             raise ValueError("non-finite completed frame")
@@ -773,6 +791,8 @@ class ExternalControlState:
                 "controlGeneration": control_generation, "resetGeneration": reset_generation,
                 "speedKmh": speed_kmh, "brake": brake}
             self._completed_at = now
+            if self._road_recovery_supported:
+                self._completed_frame["roadReady"] = road_ready is True
             current = self._orchestration
             if (current and current["held"] and current["phase"] == "MANUAL_PREPARING"
                     and active_mode == "manual" and self._safe_stop_reason == "manual_ready"

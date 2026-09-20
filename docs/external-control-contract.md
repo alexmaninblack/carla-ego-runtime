@@ -90,6 +90,34 @@ No request or applied advisory status is synthesized from telemetry.
 
 ## Demo Orchestrator Safe Stop and Reset
 
+### Test scene recovery and maneuvers — accepted 18 September 2026
+
+P5 adds a separate trusted `--scene-command` argv prefix to the existing native
+runner. Driving Control invokes only Demo Control's Test `simulation
+return-to-road` or `simulation exercise brake|tire` action without a shell.
+No new controller/tick owner, guest command, model Reset or advisory Reset is
+introduced. Scene preparation is labelled before a maneuver starts. The
+native control socket/heartbeat and telemetry reader continue independently;
+held manual keys are cleared and driving controls are blocked during the
+operation, with Safe Stop still available. One pending operation is reconciled
+by its original journal identity after uncertain output.
+
+Return to road reuses safe_stop/reset/manual_ready/release_manual. The tick
+owner checks the configured known-good spawn is a Driving lane, within two
+metres of its projected centre and ten degrees of lane direction, with bounded
+pitch/roll and conservative vehicle/walker/prop clearance. Unknown geometry or
+occupied placement is rejected before teleportation. Existing actor, scene,
+Unit assignment, models and advisory remain. Successful relocation still emits
+the existing reset-generation/discontinuity frame facts, not invented samples.
+
+The local orchestration status adds `roadRecoverySupported`, `resetError` and
+`frame.roadReady`. A rejected placement has `RESET_FAILED`, no successful reset
+generation, and an idempotent repeated reset response. Only a fresh confirmed
+stopped frame permits release into Safe Stop after that failure. A successful
+placement requires advancing stationary road-confirmed frames for at least
+half a second before stationary Manual. It never resumes Autopilot. Live
+discontinuity/product and native UI qualification remain separate from tests.
+
 ### Initial stationary Manual readiness — authorized 2026-09-06
 
 The operator explicitly authorized a narrowly scoped command-timeout exception

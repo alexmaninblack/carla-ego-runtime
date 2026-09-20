@@ -2,6 +2,25 @@ import AppKit
 import Foundation
 import Darwin
 
+// Pure receipt projection: no control command and no mode inferred from a click.
+func confirmedSceneMode(_ result: [String: Any]?, kind: String) -> (mode: String, reason: String)? {
+    guard ["return_to_road", "brake", "tire"].contains(kind),
+          let facts = result?["data"] as? [String: Any],
+          let state = facts["state"] as? String,
+          ["COMPLETED", "FAILED", "ABORTED"].contains(state),
+          result?["operation"] as? String == (kind == "return_to_road" ? "simulation.return-to-road" : "simulation.exercise"),
+          facts["kind"] as? String == kind, facts["currentVehicle"] as? String == "test",
+          facts["physicalStop"] as? String == "CONFIRMED" else { return nil }
+    if kind == "return_to_road" && state == "COMPLETED" {
+        guard facts["driveMode"] as? String == "MANUAL", facts["autopilotStarted"] as? Bool == false else { return nil }
+        return ("manual", "manual_ready")
+    }
+    // Demo Control emits this terminal receipt only after confirmed Safe Stop
+    // and release of the same scene operation. Stationary Manual is above.
+    return ("safe_stop", "")
+}
+// End receipt projection.
+
 struct Control: Encodable {
     let throttle: Double
     let brake: Double
@@ -37,12 +56,18 @@ final class ControlView: NSView {
     var onMode: ((String) -> Void)?
     var onExit: (() -> Void)?
     var onConnectivity: (() -> Void)?
+    var onScene: ((String) -> Void)?
+    var sceneBusy = false
+    var sceneDetail = "Repositions the car; keeps models and advisory state."
+    private let roadRect = NSRect(x: 18, y: 138, width: 156, height: 36)
+    private let brakeTestRect = NSRect(x: 182, y: 138, width: 156, height: 36)
+    private let tireTestRect = NSRect(x: 346, y: 138, width: 156, height: 36)
     var externalState = "UNKNOWN"
     var externalReadAt: TimeInterval = 0
     var externalBusy = false
     private var connectivityRect: NSRect {
-        NSRect(x: 18, y: availableModes.contains("scenario") ? 152 : 112,
-               width: 484, height: availableModes.contains("scenario") ? 30 : 48)
+        NSRect(x: 18, y: onScene != nil ? 86 : availableModes.contains("scenario") ? 152 : 112,
+               width: 484, height: onScene != nil ? 36 : availableModes.contains("scenario") ? 30 : 48)
     }
     private var lastUpdate = ProcessInfo.processInfo.systemUptime
 
@@ -73,6 +98,7 @@ final class ControlView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if sceneBusy && ![49, 53].contains(event.keyCode) { return }
         switch event.keyCode {
         case 36, 76, 46:
             if availableModes.contains("manual") { onMode?("manual") }  // Enter or M
@@ -180,7 +206,7 @@ final class ControlView: NSView {
         lastUpdate = now
         // The controller holds full brake until an explicit driving-mode choice.
         // No neutral command may release that brake or end manual_ready.
-        if awaitingOperator { return }
+        if awaitingOperator || sceneBusy { return }
         if mode == "manual" && !(window?.isKeyWindow ?? false) {
             onMode?("safe_stop")
             return
@@ -213,13 +239,19 @@ final class ControlView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if manualButtonRect.contains(point) {
+        if onScene != nil && !sceneBusy && roadRect.contains(point) {
+            onScene?("return_to_road")
+        } else if onScene != nil && !sceneBusy && brakeTestRect.contains(point) {
+            onScene?("brake")
+        } else if onScene != nil && !sceneBusy && tireTestRect.contains(point) {
+            onScene?("tire")
+        } else if !sceneBusy && manualButtonRect.contains(point) {
             onMode?("manual")
-        } else if autopilotButtonRect.contains(point) {
+        } else if !sceneBusy && autopilotButtonRect.contains(point) {
             onMode?("autopilot")
         } else if stopButtonRect.contains(point) {
             onMode?("safe_stop")
-        } else if availableModes.contains("scenario") && scenarioButtonRect.contains(point) {
+        } else if onScene == nil && !sceneBusy && availableModes.contains("scenario") && scenarioButtonRect.contains(point) {
             onMode?("scenario")
         } else if onConnectivity != nil && !externalBusy && connectivityRect.contains(point) {
             onConnectivity?()
@@ -426,7 +458,13 @@ final class ControlView: NSView {
             centeredText(title, in: connectivityRect, size: 14, color: ink, bold: true)
         }
 
-        if availableModes.contains("scenario") {
+        if onScene != nil {
+            for (title, rect) in [("RETURN TO ROAD",roadRect),("BRAKE MANEUVER",brakeTestRect),("TIRE MANEUVER",tireTestRect)] {
+                roundedCard(rect,fill:surface,border:sceneBusy ? .gray : .systemCyan,lineWidth:1)
+                centeredText(title,in:rect,size:11,color:sceneBusy ? muted : ink,bold:true)
+            }
+            text(sceneDetail,x:18,y:70,size:9,color:muted,alignment:.center,width:484)
+        } else if availableModes.contains("scenario") {
             actionButton(
                 mode == "scenario" ? "RESTART SCRIPTED SCENARIO" : "START SCRIPTED SCENARIO",
                 rect: scenarioButtonRect,
@@ -726,15 +764,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var telemetryBuffer = Data()
     var telemetryView: TelemetryView?
     let connectivityCommand: [String]
+    let sceneCommand: [String]
+    var sceneProcess: Process?
+    var scenePendingKind: String?
     var connectivityProcess: Process?
     var connectivityAction = "status"
     var connectivityTarget: String?
     var connectivityReadAt: TimeInterval = 0
 
-    init(command: String, telemetryCommand: [String] = [], connectivityCommand: [String] = []) {
+    init(command: String, telemetryCommand: [String] = [], connectivityCommand: [String] = [], sceneCommand: [String] = []) {
         self.command = command
         self.telemetryCommand = telemetryCommand
         self.connectivityCommand = connectivityCommand
+        self.sceneCommand = sceneCommand
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -768,6 +810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.onControl = { [weak self] control in self?.send(control) }
         view.onMode = { [weak self] mode in self?.selectMode(mode) }
         view.onExit = { [weak self] in self?.finish() }
+        if !sceneCommand.isEmpty { view.onScene = { [weak self] kind in self?.requestScene(kind) } }
         if !connectivityCommand.isEmpty {
             view.onConnectivity = { [weak self] in self?.toggleConnectivity() }
         }
@@ -864,6 +907,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func requestScene(_ kind: String) {
+        guard !closing, view.connected, sceneProcess == nil,
+              ["return_to_road","brake","tire"].contains(kind), let executable = sceneCommand.first else { return }
+        if let pending = scenePendingKind, pending != kind {
+            view.sceneDetail = "Reconcile the previous scene action first."
+            view.needsDisplay = true
+            return
+        }
+        let task = Process(), pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = Array(sceneCommand.dropFirst()) + (kind == "return_to_road"
+            ? ["return-to-road","--target","test"] : ["exercise",kind,"--target","test"])
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        task.standardInput = FileHandle.nullDevice
+        sceneProcess = task
+        scenePendingKind = kind
+        view.sceneBusy = true
+        view.pressed.removeAll()
+        view.throttle = 0; view.brake = 1; view.steering = 0
+        view.sceneDetail = kind == "return_to_road" ? "Stopping · validating road placement · stationary Manual" : "Preparing scene · real \(kind) maneuver · models unchanged"
+        view.needsDisplay = true
+        do { try task.run() } catch {
+            sceneProcess = nil; scenePendingKind = nil; view.sceneBusy = false
+            view.sceneDetail = "Scene action could not start."
+            view.needsDisplay = true
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+100) { [weak self, weak task] in
+            guard let self = self, let task = task, self.sceneProcess === task, task.isRunning else { return }
+            task.terminate() // Controller interlock/lease remains authoritative.
+        }
+        DispatchQueue.global(qos:.utility).async { [weak self] in
+            var data = Data()
+            while let chunk = try? pipe.fileHandleForReading.read(upToCount:8192), !chunk.isEmpty {
+                if data.count+chunk.count<=65536 { data.append(chunk) }
+                else { if task.isRunning { task.terminate() }; data.removeAll(); break }
+            }
+            task.waitUntilExit()
+            let result = try? JSONSerialization.jsonObject(with:data) as? [String:Any]
+            DispatchQueue.main.async {
+                guard let self = self, self.sceneProcess === task else { return }
+                self.sceneProcess = nil; self.view.sceneBusy = false
+                let facts = result?["data"] as? [String:Any]
+                let state = facts?["state"] as? String
+                if let mode = confirmedSceneMode(result, kind: kind) {
+                    self.scenePendingKind = nil
+                    self.view.setMode(mode.mode, reason: mode.reason)
+                    if mode.mode == "manual" {
+                        self.view.sceneDetail = "On road · stationary Manual · select Autopilot when ready."
+                    } else if state == "COMPLETED" {
+                        self.view.sceneDetail = "Maneuver complete · check backend and advisory separately."
+                    } else {
+                        self.view.sceneDetail = "Scene action stopped · Safe Stop · no model Reset."
+                    }
+                } else {
+                    self.view.sceneDetail = "Unconfirmed · select the same action to reconcile."
+                }
+                self.view.needsDisplay = true
+                self.completeCloseIfReady()
+            }
+        }
+    }
+
     func startTelemetry() {
         guard let executable = telemetryCommand.first else { return }
         let task = Process()
@@ -918,7 +1025,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func completeCloseIfReady() {
-        if closing && process == nil && telemetryProcess == nil && connectivityProcess == nil {
+        if closing && process == nil && telemetryProcess == nil && connectivityProcess == nil && sceneProcess == nil {
             jsonLine("keyboard_ui_closed")
             NSApp.terminate(nil)
         }
@@ -1009,6 +1116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func selectMode(_ mode: String) {
         guard !closing else { return }
+        guard !view.sceneBusy || mode == "safe_stop" else { return }
         if !view.connected {
             // Explicit operator recovery only. Reacquire stopped; never replay
             // the requested driving mode or buffered pedal commands.
@@ -1025,7 +1133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func send(_ control: Control) {
-        guard view.mode == "manual",
+        guard view.mode == "manual", !view.sceneBusy,
               let data = try? JSONEncoder().encode(control),
               let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
@@ -1040,6 +1148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         try? input?.close()
         input = nil
         if let telemetry = telemetryProcess, telemetry.isRunning { telemetry.terminate() }
+        if let scene = sceneProcess, scene.isRunning { scene.terminate() }
         completeCloseIfReady()
     }
 
@@ -1053,8 +1162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 }
 
-guard (2...4).contains(CommandLine.arguments.count) else {
-    fputs("usage: KeyboardControl <bridge-command> [telemetry-argv-json] [connectivity-argv-json]\n", stderr)
+guard (2...5).contains(CommandLine.arguments.count) else {
+    fputs("usage: KeyboardControl <bridge-command> [telemetry-argv-json] [connectivity-argv-json] [scene-argv-json]\n", stderr)
     exit(2)
 }
 var telemetryCommand: [String] = []
@@ -1065,13 +1174,19 @@ if CommandLine.arguments.count >= 3 {
     telemetryCommand = arguments
 }
 var connectivityCommand: [String] = []
-if CommandLine.arguments.count == 4 {
+if CommandLine.arguments.count >= 4 {
     guard let data = CommandLine.arguments[3].data(using: .utf8),
           let arguments = try? JSONSerialization.jsonObject(with: data) as? [String],
           !arguments.isEmpty else { exit(2) }
     connectivityCommand = arguments
 }
+var sceneCommand: [String] = []
+if CommandLine.arguments.count == 5 {
+    guard let data = CommandLine.arguments[4].data(using:.utf8),
+          let arguments = try? JSONSerialization.jsonObject(with:data) as? [String], !arguments.isEmpty else { exit(2) }
+    sceneCommand = arguments
+}
 let application = NSApplication.shared
-let delegate = AppDelegate(command: CommandLine.arguments[1], telemetryCommand: telemetryCommand, connectivityCommand: connectivityCommand)
+let delegate = AppDelegate(command: CommandLine.arguments[1], telemetryCommand: telemetryCommand, connectivityCommand: connectivityCommand, sceneCommand: sceneCommand)
 application.delegate = delegate
 application.run()

@@ -127,6 +127,11 @@ def keyboard_command(
             if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
                 raise ValueError("invalid connectivity command argv")
             result.append(json.dumps(command))
+            if getattr(arguments, "scene_command", None):
+                scene = json.loads(arguments.scene_command)
+                if not isinstance(scene,list) or not scene or not all(isinstance(part,str) and part for part in scene):
+                    raise ValueError("invalid scene command argv")
+                result.append(json.dumps(scene))
     return result
 
 
@@ -384,6 +389,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--control-directory", required=True, type=Path)
     parser.add_argument("--demo-journal", type=Path, help="read-only existing Demo Control journal for audience context")
     parser.add_argument("--connectivity-command", help="trusted Demo Control argv prefix for the selected-vehicle external link")
+    parser.add_argument("--scene-command",help="trusted Demo Control simulation argv prefix for Test road recovery and maneuvers")
     parser.add_argument("--started-timestamp", required=True, type=float)
     parser.add_argument("--viss-development", action="store_true",
                         help="explicit local server-TLS profile; no client mTLS")

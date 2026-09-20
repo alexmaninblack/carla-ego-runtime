@@ -10,6 +10,19 @@ OTHER = "031ae4e1-954f-45f4-bb67-0416f16bd431"
 
 
 class OrchestratorControlTests(unittest.TestCase):
+    def test_placement_rejection_is_terminal_for_same_operation_and_keeps_stop(self):
+        self.call("safe_stop")
+        self.observe()
+        self.call("reset",at=1.11)
+        self.state.current_control(1.12)
+        self.state.reject_reset("ROAD_POSITION_OCCUPIED")
+        self.assertEqual("RESET_FAILED",self.call("reset",at=1.13)["phase"])
+        self.assertFalse(self.state.current_control(1.14).reset_requested)
+        self.observe(at=1.15)
+        self.assertEqual("ROAD_POSITION_OCCUPIED",self.call("status",at=1.16)["resetError"])
+        self.assertEqual("RELEASED",self.call("release",at=1.17)["phase"])
+        self.assertTrue(self.state.current_control(1.18).safe_stop)
+
     def start_exercise(self, kind="brake"):
         session = self.state.handle(dict(version=2, action="acquire", requestId="ui",
             token="fixture-secret", clientId="native-ui"), 1)["sessionId"]
