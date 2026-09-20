@@ -196,7 +196,7 @@ public:
     };
     // No durable replay store is invented. Previously issued targets cannot
     // acquire a new effect after a Gateway process restart.
-    if (request.issued < started_ || request.issued > now || now - request.issued > 2s ||
+    if (request.issued < started_ || request.issued > now + 100ms || now - request.issued > 2s ||
         request.expires <= now || request.expires <= request.issued || request.expires - request.issued > 30s)
       return reject("STALE_REQUEST");
     while (!endpoint.replay.empty() && mono - endpoint.replay.front().accepted_at >= 300s)
@@ -226,7 +226,10 @@ public:
     endpoint.request = raw;
     endpoint.request_timestamp = FormatIso8601Utc(now);
     endpoint.active = request.operation == "SET" ? std::optional<Request>(request) : std::nullopt;
-    endpoint.deadline = mono + (request.expires - now);
+    // A tolerated positive clock offset must not enlarge the warning lease.
+    // Keep the original envelope intact for provenance and replay comparison.
+    endpoint.active_until = std::min(request.expires, now + 30s);
+    endpoint.deadline = mono + (endpoint.active_until - now);
     endpoint.status = Status(endpoint, request, request.operation == "SET" ? "APPLIED" : "CLEARED", "NONE", now);
     endpoint.last_application_status = endpoint.status;
     return {true, "NONE"};
@@ -271,6 +274,7 @@ private:
     std::optional<Request> last_accepted;
     Mono::time_point last_accepted_at;
     Mono::time_point deadline;
+    Wall::time_point active_until;
     std::deque<Replay> replay;
     std::string request;
     std::string request_timestamp;
@@ -288,11 +292,11 @@ private:
         {"state", state}, {"reason", reason}, {"gatewayObservedAt", FormatIso8601Utc(now)},
         {"activeRecommendation", endpoint.active ? endpoint.active->recommendation : "NONE"},
         {"activeReasonCode", endpoint.active ? endpoint.active->reason : "NONE"},
-        {"activeUntil", endpoint.active ? json::value(FormatIso8601Utc(endpoint.active->expires)) : json::value(nullptr)}};
+        {"activeUntil", endpoint.active ? json::value(FormatIso8601Utc(endpoint.active_until)) : json::value(nullptr)}};
     return Canonical(status);
   }
   static void Expire(Endpoint &endpoint, Wall::time_point now, Mono::time_point mono) {
-    if (endpoint.active && (mono >= endpoint.deadline || now >= endpoint.active->expires)) {
+    if (endpoint.active && (mono >= endpoint.deadline || now >= endpoint.active_until)) {
       const auto expired = *endpoint.active;
       endpoint.active.reset();
       endpoint.status = Status(endpoint, expired, "EXPIRED", "NONE", now);

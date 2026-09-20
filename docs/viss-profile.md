@@ -52,7 +52,7 @@ assignment-control socket described below is a separate local control plane.
 
 ## Typed QM advisory boundary (D4-008)
 
-The Gateway implements the accepted solution `qm-advisory-profile` 1.1.0:
+The Gateway implements the accepted solution `qm-advisory-profile` 1.2.0:
 `Vehicle.OEM.BrakeHealth.Advisory.Request` and
 `Vehicle.OEM.TireHealth.Advisory.Request`, with the corresponding
 `GatewayStatus` sensors. The VISS Set value is the unchanged canonical JSON
@@ -62,8 +62,11 @@ package-release provenance, not authorization or a hard-coded release list.
 
 The current assignment authenticates the selected VDP certificate. Gateway
 revalidates exact schema/keys, endpoint enums, 2048-byte request limit, UUID and
-sequence identity, UTC dates, at-most-two-second acceptance age and 30-second
-lease. Refresh is bounded to 10 seconds; changes to one second. A bounded
+sequence identity, UTC dates, at-most-two-second past acceptance age, at-most
+100 ms future-clock skew and a 30-second declared lease. Effective activation
+expires at the earlier of original expiry and acceptance plus 30 seconds;
+`activeUntil` and the monotonic deadline use that same bounded expiry without
+rewriting the original request. Refresh is bounded to 10 seconds; changes to one second. A bounded
 512-entry replay cache per endpoint retains accepted identities for five
 minutes and is shared across WebSocket reconnects. Different content for the
 same identity and sequence rollback fail closed. Identical repeats do not

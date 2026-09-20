@@ -87,7 +87,7 @@ int main() {
   assert(gateway.Handle(selected, brake, Canonical(altered), now, mono).reason == "INVALID_VALUE");
   altered = request; altered["issuedAt"] = "2026-02-31T12:00:00.000Z";
   assert(gateway.Handle(selected, brake, Canonical(altered), now, mono).reason == "INVALID_VALUE");
-  altered = request; altered["issuedAt"] = FormatIso8601Utc(now + 1ms);
+  altered = request; altered["issuedAt"] = FormatIso8601Utc(now + 101ms);
   assert(gateway.Handle(selected, brake, Canonical(altered), now, mono).reason == "STALE_REQUEST");
   assert(gateway.Handle(selected, brake, Canonical(Request(now - 3s)), now, mono).reason == "STALE_REQUEST");
   altered = request; altered["expiresAt"] = FormatIso8601Utc(now + 31s);
@@ -146,6 +146,52 @@ int main() {
   QmAdvisoryGateway clock_adjusted(now - 1s);
   assert(clock_adjusted.Handle(selected, brake, Canonical(request), now, mono).accepted);
   assert(Status(clock_adjusted, now + 1s, mono + 30s).at("state") == "EXPIRED");
+  // The approved future-clock allowance is exact and applies to both QM
+  // endpoints, not to authorization, old requests, replay or rate limits.
+  for (const bool is_tire : {false, true}) {
+    const auto &path = is_tire ? tire : brake;
+    for (const auto offset : {-2001ms, -2000ms, 0ms, 1ms, 100ms, 101ms}) {
+      QmAdvisoryGateway boundary(now - 5s);
+      const auto raw = Canonical(Request(now + offset, 1, is_tire));
+      const auto result = boundary.Handle(selected, path, raw, now, mono);
+      assert(result.accepted == (offset >= -2000ms && offset <= 100ms));
+      if (!result.accepted) assert(result.reason == "STALE_REQUEST");
+    }
+    const auto raw = Canonical(Request(now + 100ms, 1, is_tire));
+    QmAdvisoryGateway bounded(now - 5s);
+    assert(bounded.Handle(selected, path, raw, now, mono).accepted);
+    const auto first = Status(bounded, now, mono, is_tire);
+    assert(std::string(first.at("activeUntil").as_string()) == FormatIso8601Utc(now + 30s));
+    assert(std::get<std::string>(bounded.Snapshot(now, mono).at(is_tire ? 2 : 0).value) == raw);
+    assert(bounded.Handle(selected, path, raw, now + 1s, mono + 1s).reason == "IDEMPOTENT_NO_NEW_EFFECT");
+    assert(Status(bounded, now + 1s, mono + 1s, is_tire) == first);
+    auto conflict = json::parse(raw).as_object(); conflict["decisionId"] = "other";
+    assert(bounded.Handle(selected, path, Canonical(conflict), now + 1s, mono + 1s).reason == "REPLAY_DETECTED");
+    assert(bounded.Handle(selected, path, raw, now + 1s, mono + 1s).reason == "IDEMPOTENT_NO_NEW_EFFECT");
+    assert(Status(bounded, now + 30s - 1ms, mono + 30s - 1ms, is_tire).at("state") == "APPLIED");
+    assert(Status(bounded, now + 30s, mono + 30s, is_tire).at("state") == "EXPIRED");
+    // UTC moving backwards cannot extend the acceptance-relative deadline;
+    // moving forwards expires at the same clipped activeUntil shown in UI.
+    for (const bool backwards : {false, true}) {
+      QmAdvisoryGateway clock_step(now - 5s);
+      assert(clock_step.Handle(selected, path, raw, now, mono).accepted);
+      assert(Status(clock_step, backwards ? now - 1s : now + 30s,
+                    backwards ? mono + 30s : mono + 1s, is_tire).at("state") == "EXPIRED");
+    }
+    QmAdvisoryGateway shorter(now - 5s);
+    auto short_request = Request(now + 100ms, 1, is_tire);
+    short_request["expiresAt"] = FormatIso8601Utc(now + 5s);
+    assert(shorter.Handle(selected, path, Canonical(short_request), now, mono).accepted);
+    assert(std::string(Status(shorter, now, mono, is_tire).at("activeUntil").as_string()) == FormatIso8601Utc(now + 5s));
+    assert(Status(shorter, now + 5s, mono + 5s, is_tire).at("state") == "EXPIRED");
+    QmAdvisoryGateway invalid_lease(now - 5s);
+    auto too_long = Request(now + 100ms, 1, is_tire);
+    too_long["expiresAt"] = FormatIso8601Utc(now + 30s + 101ms);
+    assert(invalid_lease.Handle(selected, path, Canonical(too_long), now, mono).reason == "STALE_REQUEST");
+    // Even a tolerated future timestamp cannot replay across process start.
+    QmAdvisoryGateway after_restart(now + 101ms);
+    assert(after_restart.Handle(selected, path, raw, now + 101ms, mono).reason == "STALE_REQUEST");
+  }
   // Retain replay protection beyond the maximum live lease and reject changed
   // content under an already accepted identity even with new valid UTC dates.
   QmAdvisoryGateway replay_retained(now - 1s);
