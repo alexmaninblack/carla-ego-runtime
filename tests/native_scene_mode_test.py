@@ -10,6 +10,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "macOS Swift required")
 class NativeSceneModeTests(unittest.TestCase):
+    def test_known_preflight_rejection_is_not_an_uncertain_motion_result(self):
+        source = (ROOT / "tools/KeyboardControl.swift").read_text()
+        projection = "func scenePreflightMessage(" + source.split("func scenePreflightMessage(", 1)[1].split("// End preflight projection.", 1)[0]
+        assertions = r'''
+let rejected: [String: Any] = ["operation": "simulation.return-to-road", "state": "BLOCKED",
+    "message": "SIMULATION_EXERCISE_REQUIRES_SELECTED_TEST"]
+assert(scenePreflightMessage(rejected, kind: "return_to_road")?.contains("Driving mode unchanged") == true)
+assert(scenePreflightMessage(rejected, kind: "brake") == nil)
+assert(scenePreflightMessage(nil, kind: "return_to_road") == nil)
+for message in ["CURRENT_RUN_BUSY", "SIMULATION_EXERCISE_UNCONFIRMED", "ROAD_RECOVERY_UNCONFIRMED"] {
+    var uncertain = rejected; uncertain["message"] = message
+    assert(scenePreflightMessage(uncertain, kind: "return_to_road") == nil)
+}
+var partial = rejected; partial["state"] = "PARTIAL"
+assert(scenePreflightMessage(partial, kind: "return_to_road") == nil)
+print("PASS preflight rejection projection")
+'''
+        with tempfile.TemporaryDirectory(prefix="native-scene-preflight-") as temp:
+            harness = Path(temp) / "main.swift"
+            harness.write_text("import Foundation\n" + projection + assertions)
+            result = subprocess.run(["xcrun", "swift", "-module-cache-path", str(Path(temp) / "cache"), str(harness)],
+                                    text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("PASS preflight rejection projection", result.stdout)
+
     def test_confirmed_modes_and_uncertain_receipts(self):
         source = (ROOT / "tools/KeyboardControl.swift").read_text()
         projection = "func confirmedSceneMode(" + source.split("func confirmedSceneMode(", 1)[1].split("// End receipt projection.", 1)[0]

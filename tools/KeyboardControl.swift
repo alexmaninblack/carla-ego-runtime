@@ -21,6 +21,17 @@ func confirmedSceneMode(_ result: [String: Any]?, kind: String) -> (mode: String
 }
 // End receipt projection.
 
+// Only a known preflight rejection proves that no scene command was sent.
+// Other failures retain their pending identity for reconciliation.
+func scenePreflightMessage(_ result: [String: Any]?, kind: String) -> String? {
+    guard ["return_to_road", "brake", "tire"].contains(kind),
+          result?["operation"] as? String == (kind == "return_to_road" ? "simulation.return-to-road" : "simulation.exercise"),
+          result?["state"] as? String == "BLOCKED",
+          result?["message"] as? String == "SIMULATION_EXERCISE_REQUIRES_SELECTED_TEST" else { return nil }
+    return "Not started · provision and connect Test first. Driving mode unchanged."
+}
+// End preflight projection.
+
 struct Control: Encodable {
     let throttle: Double
     let brake: Double
@@ -962,6 +973,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     } else {
                         self.view.sceneDetail = "Scene action stopped · Safe Stop · no model Reset."
                     }
+                } else if let message = scenePreflightMessage(result, kind: kind) {
+                    self.scenePendingKind = nil
+                    self.view.sceneDetail = message
                 } else {
                     self.view.sceneDetail = "Unconfirmed · select the same action to reconcile."
                 }
