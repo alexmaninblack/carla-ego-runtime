@@ -1,7 +1,17 @@
 # CARLA Ego Runtime
 
+Current integrated source: demo-v1.1, with
+[protocol/authority mapping](../aosedge-sdv-demo/contracts/implementation-status.md)
+and [dated qualification](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
+Strict-role selected-Unit mTLS, typed advisory, native Driving Control/Telemetry,
+real Brake/Tire exercises and Return to road are implemented. Road recovery
+ends stationary in Manual and does not reset service models or start Autopilot.
+Factory39 controller ignition is a separate guarded integration feature; laptop
+sleep/wake recovery remains planned. The M-series sections retain the original
+standalone build/use milestones, not the whole integrated qualification claim.
+
 A native C++ runtime for one instrumented ego vehicle in the
-[CARLA simulator](https://github.com/carla-simulator/carla). It will expose
+[CARLA simulator](https://github.com/carla-simulator/carla). It exposes
 vehicle telemetry through the COVESA Vehicle Information Service Specification
 (VISS).
 
@@ -73,11 +83,13 @@ The external contract is a documented profile of
 [COVESA VISS 3.1](https://github.com/COVESA/vehicle-information-service-specification/tree/v3.1)
 over a [COVESA VSS 6.0](https://github.com/COVESA/vehicle_signal_specification/tree/v6.0)
 signal tree. The initial network profile uses JSON over Secure WebSocket and
-supports reading and subscribing to telemetry.
+supports reading and subscribing to telemetry, plus the narrowly typed
+Brake/Tire advisory Set boundary under strict roles in the integrated demo.
 
 Cameras, LiDAR, radar, and ultrasonic modelling remain deferred. M6 adds a
-separate local external-control channel while deliberately keeping VISS
-read-only. ROS 2 is not a runtime dependency; a ROS 2 adapter may be added
+separate local external-control channel. General VISS writes remain rejected;
+only the accepted typed QM advisory targets are writable by the selected
+platform peer. Those advisories grant no motion authority. ROS 2 is not a runtime dependency; a ROS 2 adapter may be added
 later for consumers that already use that ecosystem.
 
 ## Repository boundaries
