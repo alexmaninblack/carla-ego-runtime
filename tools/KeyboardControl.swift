@@ -70,6 +70,8 @@ final class ControlView: NSView {
     var onScene: ((String) -> Void)?
     var sceneBusy = false
     var sceneDetail = "Repositions the car; keeps models and advisory state."
+    // The only gap between scene buttons (y >= 138) and network (y <= 122).
+    let sceneCaptionRect = NSRect(x: 18, y: 124, width: 484, height: 12)
     private let roadRect = NSRect(x: 18, y: 138, width: 156, height: 36)
     private let brakeTestRect = NSRect(x: 182, y: 138, width: 156, height: 36)
     private let tireTestRect = NSRect(x: 346, y: 138, width: 156, height: 36)
@@ -394,7 +396,7 @@ final class ControlView: NSView {
             )
         } else if mode == "scenario" {
             text(
-                "VEHICLE CONTROLLED BY THE BRAKE-EVENT STATE MACHINE",
+                "VEHICLE CONTROLLED BY THE ACTIVE TEST MANEUVER",
                 x: 44,
                 y: 270,
                 size: 12,
@@ -474,7 +476,10 @@ final class ControlView: NSView {
                 roundedCard(rect,fill:surface,border:sceneBusy ? .gray : .systemCyan,lineWidth:1)
                 centeredText(title,in:rect,size:11,color:sceneBusy ? muted : ink,bold:true)
             }
-            text(sceneDetail,x:18,y:70,size:9,color:muted,alignment:.center,width:484)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: sceneCaptionRect).addClip()
+            centeredText(sceneDetail, in: sceneCaptionRect, size: 9, color: muted)
+            NSGraphicsContext.restoreGraphicsState()
         } else if availableModes.contains("scenario") {
             actionButton(
                 mode == "scenario" ? "RESTART SCRIPTED SCENARIO" : "START SCRIPTED SCENARIO",
@@ -938,7 +943,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.sceneBusy = true
         view.pressed.removeAll()
         view.throttle = 0; view.brake = 1; view.steering = 0
-        view.sceneDetail = kind == "return_to_road" ? "Stopping · validating road placement · stationary Manual" : "Preparing scene · real \(kind) maneuver · models unchanged"
+        view.sceneDetail = kind == "return_to_road" ? "Stopping · validating road placement · stationary Manual" : "Real \(kind) maneuver · no model Reset"
         view.needsDisplay = true
         do { try task.run() } catch {
             sceneProcess = nil; scenePendingKind = nil; view.sceneBusy = false
@@ -967,11 +972,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.scenePendingKind = nil
                     self.view.setMode(mode.mode, reason: mode.reason)
                     if mode.mode == "manual" {
-                        self.view.sceneDetail = "On road · stationary Manual · select Autopilot when ready."
+                        self.view.sceneDetail = "Return to road complete · models and advisory state retained."
                     } else if state == "COMPLETED" {
                         self.view.sceneDetail = "Maneuver complete · check backend and advisory separately."
                     } else {
-                        self.view.sceneDetail = "Scene action stopped · Safe Stop · no model Reset."
+                        self.view.sceneDetail = "Scene action ended in Safe Stop · no model Reset."
                     }
                 } else if let message = scenePreflightMessage(result, kind: kind) {
                     self.scenePendingKind = nil
