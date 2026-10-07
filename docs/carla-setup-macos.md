@@ -1,5 +1,11 @@
 # Native CARLA setup on macOS
 
+For the installed SDV Lab, use the [prebuilt package guide](../../aosedge-sdv-demo/docs/getting-started/installed-preview-cloud-first-use.md).
+No Editor or compiler is required on the operator Mac. The developer recipe
+below preserves its M1–M5 milestone pins; use the
+[current candidate source lock](../../aosedge-sdv-demo/workspace/checkpoints/installer-kit-028-source-lock.json)
+for rebuilding today's integrated package.
+
 ## Tested baseline
 
 M1–M5 are developed and tested against:

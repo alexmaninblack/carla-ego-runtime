@@ -1,14 +1,18 @@
 # CARLA Ego Runtime
 
-Current integrated source: demo-v1.1, with
+Current integrated source: Kit028 / Setup042 candidate (7 October 2026), with
 [protocol/authority mapping](../aosedge-sdv-demo/contracts/implementation-status.md)
 and [dated qualification](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
 Strict-role selected-Unit mTLS, typed advisory, native Driving Control/Telemetry,
 real Brake/Tire exercises and Return to road are implemented. Road recovery
 ends stationary in Manual and does not reset service models or start Autopilot.
-Factory39 controller ignition is a separate guarded integration feature; laptop
+Factory41 controller ignition is a separate guarded integration feature; laptop
 sleep/wake recovery remains planned. The M-series sections retain the original
 standalone build/use milestones, not the whole integrated qualification claim.
+The prebuilt installed demo uses standalone CARLA without Unreal Editor;
+component build prerequisites below are not prerequisites for the operator DMG.
+Kit028's partial native layout/Connect/driving observations do not close the
+complete native operator journey.
 
 A native C++ runtime for one instrumented ego vehicle in the
 [CARLA simulator](https://github.com/carla-simulator/carla). It exposes
