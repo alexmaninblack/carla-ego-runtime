@@ -1,5 +1,24 @@
 # CARLA Ego Runtime
 
+Vehicle Gateway and simulation-control tooling; it translates CARLA data to
+VISS and owns the local driving/control boundary.
+
+## SDV Lab entry
+
+For the complete demo, start at the
+[SDV Lab product repository](https://github.com/alexmaninblack/aosedge-sdv-demo).
+Operators use its prebuilt installer; developers use its pinned build route.
+This component is not a standalone installer for the whole lab. Integration
+source pins and published artifact provenance do not change when this README
+changes. Detailed historical evidence below retains its original scope.
+
+[Component architecture](docs/architecture.md) and [VISS profile](docs/viss-profile.md).
+
+Local checks: [build without CARLA](#build-without-carla) configures a
+component-only CMake/CTest build. Put its build directory on the declared SSD;
+it is not a native simulator or integrated acceptance test.
+
+
 Current integrated source: Kit028 / Setup042 candidate (7 October 2026), with
 [protocol/authority mapping](../aosedge-sdv-demo/contracts/implementation-status.md)
 and [dated qualification](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
