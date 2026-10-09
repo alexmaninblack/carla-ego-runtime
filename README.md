@@ -1,27 +1,132 @@
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # CARLA Ego Runtime
 
-Vehicle Gateway and simulation-control tooling; it translates CARLA data to
-VISS and owns the local driving/control boundary.
+Vehicle Gateway and native driving/control tooling. It translates simulator data to VISS and owns the local motion-control boundary; QM advisories do not acquire motion authority.
 
-## SDV Lab entry
+<a id="sdv-lab-entry"></a>
 
-For the complete demo, start at the
-[SDV Lab product repository](https://github.com/alexmaninblack/aosedge-sdv-demo).
-Operators use its prebuilt installer; developers use its pinned build route.
-This component is not a standalone installer for the whole lab. Integration
-source pins and published artifact provenance do not change when this README
-changes. Detailed historical evidence below retains its original scope.
+For the **whole demo**, start at the [SDV Lab README](https://github.com/alexmaninblack/aosedge-sdv-demo).
+Only the product repository is manually cloned for its pinned multi-component
+build. The instructions below are for working on **this component alone**;
+a host check does not publish, install or qualify a vehicle package.
 
-[Component architecture](docs/architecture.md) and [VISS profile](docs/viss-profile.md).
+## 1 Prepare a macOS component workspace
 
-Local checks: [build without CARLA](#build-without-carla) configures a
-component-only CMake/CTest build. Put its build directory on the declared SSD;
-it is not a native simulator or integrated acceptance test.
+Use native Apple Silicon Terminal. These component commands are for development,
+not a qualified full-demo installation. Run blocks in order and stop on error.
+The revised instructions await the joint walkthrough; they were not executed
+during this documentation update.
 
+Choose an already mounted external APFS SSD:
+
+```sh
+uname -m
+printf 'Mounted external APFS volume (for example /Volumes/BUILD): '
+read -r SDV_VOLUME
+diskutil info "$SDV_VOLUME"
+df -h "$SDV_VOLUME"
+```
+
+Expect `arm64` and the actual external volume. Do not create a missing mount
+directory. After confirming storage:
+
+```sh
+SDV_WORK="$SDV_VOLUME/sdv-components"
+mkdir -p "$SDV_WORK" "$SDV_VOLUME/tmp"
+export TMPDIR="$SDV_VOLUME/tmp"
+export HOMEBREW_CACHE="$SDV_WORK/cache/homebrew"
+```
+
+Install Apple's Command Line Tools with `xcode-select --install` if missing,
+and finish the system dialog. Install [Homebrew](https://docs.brew.sh/Installation)
+if absent. Then:
+
+```sh
+eval "$(/opt/homebrew/bin/brew shellenv)"
+brew install cmake python@3.12
+export PATH="$(brew --prefix python@3.12)/libexec/bin:$PATH"
+git --version
+cmake --version
+python3 --version
+xcrun clang++ --version
+```
+
+Do not use the installed demo's private interpreter or a Rosetta toolchain.
+
+## 2 Clone this component
+
+```sh
+git clone --branch main https://github.com/alexmaninblack/carla-ego-runtime.git "$SDV_WORK/carla-ego-runtime"
+cd "$SDV_WORK/carla-ego-runtime"
+git rev-parse HEAD
+```
+
+Record the printed revision with your results. `main` is current development,
+not a release pin. To reproduce the complete candidate, use the product
+repository's manifest-driven route instead of independently choosing branches.
+
+## 3 Build and check host targets
+
+```sh
+SDV_BUILD="$SDV_WORK/build/carla-ego-runtime"
+cmake -S . -B "$SDV_BUILD" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+  -DCARLA_EGO_WITH_CARLA=OFF -DCARLA_EGO_WITH_VISS=OFF
+cmake --build "$SDV_BUILD" --parallel 2
+ctest --test-dir "$SDV_BUILD" --output-on-failure
+```
+
+Expect a successful build and no failed CTest cases. Keep the first failure;
+do not replace expected results or lower resource/security requirements.
+
+This route requires CMake 3.24 or later and a C++20 compiler. It deliberately
+has **no CARLA connection or VISS server**. Keep Python available when
+configuring so the optional Python CTest cases are registered.
+
+## 4 Check the executable, or choose the live route
+
+```sh
+"$SDV_BUILD/carla-ego-runtime" --version
+"$SDV_BUILD/carla-ego-runtime" --help
+```
+
+Expected: version/usage output and normal exit, not a simulator window.
+For the real Gateway use the product repository's developer chain, which
+supplies the pinned LibCarla SDK and native TLS dependencies. For specialist
+component-only work see [native macOS setup](docs/carla-setup-macos.md).
+Do not start that standalone launcher over a Demo Control-owned simulator.
+
+The installed demo reuses **standalone CARLA without Unreal Editor**. Opening
+an Editor or compiling Unreal is not a prerequisite for checking this component.
+
+## 5 Finish
+
+The version/help and CTest commands exit on completion; no simulator was
+started. Live standalone launchers are stopped through their foreground owner
+(Ctrl-C where documented). Integrated sessions are stopped through Demo Control.
+Do not use a broad process kill or stop unrelated Docker workloads.
+
+## Component documentation
+
+- [Architecture](docs/architecture.md)
+- [VISS profile](docs/viss-profile.md)
+- [External-control contract](docs/external-control-contract.md)
+- [Native macOS setup](docs/carla-setup-macos.md)
+- [License](LICENSE) and [third-party dependencies](THIRD_PARTY.md)
+
+## Implementation reference and dated evidence
+
+The material below preserves detailed contracts, milestones and specialist
+examples. Historical commands are not the first-use sequence above. Original
+qualification dates/scope remain unchanged by this documentation revision.
+
+<details>
+<summary>Expand implementation reference and historical evidence</summary>
 
 Current integrated source: Kit028 / Setup042 candidate (7 October 2026), with
-[protocol/authority mapping](../aosedge-sdv-demo/contracts/implementation-status.md)
-and [dated qualification](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
+[protocol/authority mapping](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/5e30b410cbeadd2f73063b1bd313253aff612595/contracts/implementation-status.md)
+and [dated qualification](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/5e30b410cbeadd2f73063b1bd313253aff612595/docs/qualification/current-baseline.md).
 Strict-role selected-Unit mTLS, typed advisory, native Driving Control/Telemetry,
 real Brake/Tire exercises and Return to road are implemented. Road recovery
 ends stationary in Manual and does not reset service models or start Autopilot.
@@ -274,3 +379,5 @@ dashboard, see [macOS desktop launchers](docs/macos-launchers.md).
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+</details>
