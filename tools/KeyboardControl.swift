@@ -38,6 +38,69 @@ struct Control: Encodable {
     let steering: Double
 }
 
+// Stable native UI semantics, independent of captions and desktop coordinates.
+// This guard mirrors the existing mouse dispatch, not a new vehicle authority.
+enum DrivingButton: String, CaseIterable {
+    case safeStop = "driving.safe-stop"
+    case autopilot = "driving.autopilot"
+    case brake = "driving.brake-maneuver"
+    case tire = "driving.tire-maneuver"
+    case road = "driving.return-to-road"
+
+    var label: String {
+        switch self {
+        case .safeStop: return "Safe Stop"
+        case .autopilot: return "Autopilot"
+        case .brake: return "Brake maneuver"
+        case .tire: return "Tire maneuver"
+        case .road: return "Return to road"
+        }
+    }
+
+    func enabled(sceneBusy: Bool, hasScenes: Bool) -> Bool {
+        switch self {
+        case .safeStop: return true
+        case .autopilot: return !sceneBusy
+        case .brake, .tire, .road: return hasScenes && !sceneBusy
+        }
+    }
+
+    func presented(hasScenes: Bool) -> Bool {
+        switch self {
+        case .brake, .tire, .road: return hasScenes
+        case .safeStop, .autopilot: return true
+        }
+    }
+}
+// End stable native UI semantics.
+
+final class DrivingButtonElement: NSAccessibilityElement {
+    weak var control: ControlView?
+    let button: DrivingButton
+
+    init(_ button: DrivingButton, control: ControlView) {
+        self.button = button
+        self.control = control
+        super.init()
+    }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityIdentifier() -> String? { button.rawValue }
+    override func accessibilityLabel() -> String? { button.label }
+    override func accessibilityParent() -> Any? { control }
+    override func accessibilityFrame() -> NSRect {
+        guard let control, control.window != nil else { return .zero }
+        return NSAccessibility.screenRect(fromView: control, rect: control.buttonRect(button))
+    }
+    override func isAccessibilityEnabled() -> Bool {
+        guard let control else { return false }
+        return button.enabled(sceneBusy: control.sceneBusy, hasScenes: control.onScene != nil)
+    }
+    override func accessibilityPerformPress() -> Bool {
+        control?.activate(button) ?? false
+    }
+}
+
 func jsonLine(_ event: String, fields: [String: Any] = [:]) {
     var record = fields
     record["source"] = "keyboard_control_ui"
@@ -95,6 +158,44 @@ final class ControlView: NSView {
     private let brakeKeyRect = NSRect(x: 190, y: 356, width: 140, height: 44)
 
     override var acceptsFirstResponder: Bool { true }
+
+    private lazy var accessibleButtons = DrivingButton.allCases.map { DrivingButtonElement($0, control: self) }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityIdentifier() -> String { "driving.controls" }
+    override func accessibilityLabel() -> String? { "Driving Control" }
+    override func accessibilityChildren() -> [Any]? {
+        accessibleButtons.filter { $0.button.presented(hasScenes: onScene != nil) }
+    }
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+        for element in accessibleButtons where element.accessibilityFrame().contains(point) {
+            if !element.button.presented(hasScenes: onScene != nil) { continue }
+            return element
+        }
+        return super.accessibilityHitTest(point)
+    }
+
+    func buttonRect(_ button: DrivingButton) -> NSRect {
+        switch button {
+        case .safeStop: return stopButtonRect
+        case .autopilot: return autopilotButtonRect
+        case .brake: return brakeTestRect
+        case .tire: return tireTestRect
+        case .road: return roadRect
+        }
+    }
+
+    @discardableResult func activate(_ button: DrivingButton) -> Bool {
+        guard button.enabled(sceneBusy: sceneBusy, hasScenes: onScene != nil) else { return false }
+        switch button {
+        case .safeStop: onMode?("safe_stop")
+        case .autopilot: onMode?("autopilot")
+        case .brake: onScene?("brake")
+        case .tire: onScene?("tire")
+        case .road: onScene?("return_to_road")
+        }
+        return true
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -252,18 +353,13 @@ final class ControlView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if onScene != nil && !sceneBusy && roadRect.contains(point) {
-            onScene?("return_to_road")
-        } else if onScene != nil && !sceneBusy && brakeTestRect.contains(point) {
-            onScene?("brake")
-        } else if onScene != nil && !sceneBusy && tireTestRect.contains(point) {
-            onScene?("tire")
+        // The same current rectangles/guards back mouse and Accessibility input.
+        if let button = DrivingButton.allCases.first(where: {
+            $0.presented(hasScenes: onScene != nil) && buttonRect($0).contains(point)
+        }) {
+            activate(button)
         } else if !sceneBusy && manualButtonRect.contains(point) {
             onMode?("manual")
-        } else if !sceneBusy && autopilotButtonRect.contains(point) {
-            onMode?("autopilot")
-        } else if stopButtonRect.contains(point) {
-            onMode?("safe_stop")
         } else if onScene == nil && !sceneBusy && availableModes.contains("scenario") && scenarioButtonRect.contains(point) {
             onMode?("scenario")
         } else if onConnectivity != nil && !externalBusy && connectivityRect.contains(point) {

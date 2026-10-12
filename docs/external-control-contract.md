@@ -1,5 +1,27 @@
 # External control contract v3
 
+## Stable native UI identities
+
+The review-branch pilot adds virtual Accessibility button elements to the
+existing custom-drawn `ControlView`. Their identifiers are
+`driving.safe-stop`, `driving.autopilot`, `driving.brake-maneuver`,
+`driving.tire-maneuver` and `driving.return-to-road`. Visible captions and window
+coordinates are not identities. Frames are derived from the current view and
+screen transform on every query.
+
+Mouse hit-testing and Accessibility activation use the same guarded dispatch.
+Safe Stop remains available during a scene operation; Autopilot is disabled
+while busy. Scene actions are present only when the existing scene callback is
+configured and disabled while busy. The remaining controls and their hit-tests
+are unchanged. These elements add no control socket, command, credential or
+vehicle authority.
+
+The integration repository's native UI runner pilot compiles this exact
+production view into a separate signed fixture on M1. Its callbacks confirm
+mouse delivery without connecting a vehicle. This mechanical gate is not live
+motion, Safe Stop physics, product delivery or installed-package acceptance.
+The installed immutable payload is never replaced in place.
+
 ## Native telemetry development slice — 2026-09-07
 
 The operator authorized combining Driving Control and telemetry, followed by
