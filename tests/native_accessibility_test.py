@@ -20,6 +20,7 @@ class AccessibilitySourceTests(unittest.TestCase):
         self.assertIn('activate(button)', source.split('override func mouseDown', 1)[1])
         self.assertIn('override func accessibilityHitTest', source)
         self.assertIn('override func isAccessibilityEnabled()', source)
+        self.assertIn('window.setAccessibilityIdentifier("driving.window")', source)
         self.assertIn('$0.presented(hasScenes: onScene != nil) && buttonRect($0).contains(point)', source)
 
     @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'macOS Swift required')

@@ -911,6 +911,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             defer: false
         )
         window.title = combined ? "CARLA — Driving Control & Telemetry" : "CARLA — Live Driving Control"
+        window.setAccessibilityIdentifier("driving.window")
         window.contentView = content
         content.autoresizingMask = [.width, .height]
         window.contentMinSize = combined ? NSSize(width: 900, height: 470) : NSSize(width: 360, height: 390)
