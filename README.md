@@ -16,26 +16,25 @@ a host check does not publish, install or qualify a vehicle package.
 
 Use native Apple Silicon Terminal. These component commands are for development,
 not a qualified full-demo installation. Run blocks in order and stop on error.
-The revised instructions await the joint walkthrough; they were not executed
-during this documentation update.
 
-Choose an already mounted external APFS SSD:
+Choose an existing writable local APFS parent folder, on the internal disk or
+an external SSD. Use the product launcher instead for automatic full-demo
+preparation; this section is only the component workflow:
 
 ```sh
 uname -m
-printf 'Mounted external APFS volume (for example /Volumes/BUILD): '
-read -r SDV_VOLUME
-diskutil info "$SDV_VOLUME"
-df -h "$SDV_VOLUME"
+printf 'Existing local APFS parent folder (absolute path): '
+read -r SDV_PARENT
+test -d "$SDV_PARENT" && test -w "$SDV_PARENT" && df -h "$SDV_PARENT"
 ```
 
-Expect `arm64` and the actual external volume. Do not create a missing mount
-directory. After confirming storage:
+Expect `arm64` and enough free space on the selected volume. Stop if the
+folder/access check fails; do not create a replacement for a disconnected
+volume. An external SSD is optional. After confirming storage:
 
 ```sh
-SDV_WORK="$SDV_VOLUME/sdv-components"
-mkdir -p "$SDV_WORK" "$SDV_VOLUME/tmp"
-export TMPDIR="$SDV_VOLUME/tmp"
+SDV_WORK="$SDV_PARENT/sdv-components"
+mkdir -p "$SDV_WORK"
 export HOMEBREW_CACHE="$SDV_WORK/cache/homebrew"
 ```
 

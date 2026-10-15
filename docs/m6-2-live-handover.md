@@ -1,4 +1,11 @@
-# M6.2 live manual and automatic handover
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
+<!-- SPDX-License-Identifier: MIT -->
+
+# Standalone manual/autopilot handover (M6.2)
+
+These controls describe the standalone component workflow. For an installed
+lab use Demo Control and the current operator guide; its stop/retention and
+Test deletion are separate actions.
 
 ## Outcome
 
@@ -52,9 +59,7 @@ command.
 Unreal applies spectator transforms only on physics boundaries, so the camera
 derives its target from the frame-aligned world snapshot and performs exactly
 one smoothing update per 30 Hz physics tick. It no longer runs a competing 60
-Hz RPC thread or issues catch-up camera updates. A 40 Hz live test was rejected
-because Town10HD could not sustain it on the target Mac; the stable 30 Hz
-cadence avoids the resulting long frames.
+Hz RPC thread or issues catch-up camera updates. The configured 30 Hz cadence keeps one frame-aligned camera update per tick.
 
 ## Safety rules
 
@@ -70,7 +75,8 @@ cadence avoids the resulting long frames.
 - Autopilot still requires the 1,000 ms ownership heartbeat, but does not
   require meaningless manual commands.
 - Only one authenticated local client can own control.
-- VISS stays read-only and carries telemetry, not actuator commands.
+- General VISS motion writes are forbidden. The strict integrated profile's
+  narrowly typed Brake/Tire advisory return grants no actuator authority.
 - The local socket and token use a short owner-only temporary runtime directory
   and are removed at shutdown; durable artifacts remain under the configured
   run root.
@@ -92,20 +98,3 @@ state. It must show one vehicle driving manually, continuing automatically
 after A or the Autopilot button, returning to responsive arrow-key control with
 M/Enter, and stopping with Space. VSS telemetry must remain connected and the
 final run manifest must report clean removal of the actor, socket, and token.
-
-This acceptance completed on the pinned Apple Silicon baseline on 2026-08-12.
-The operator accepted the live controls, automatic drive, and frame-locked
-camera visually. The final cold-start session reached its first VSS frame in
-26.5 seconds, maintained a measured 30.0 Hz average simulation rate, and ended
-with VISS `CONNECTED` and `LIVE`. The runtime, controller, and keyboard client
-all exited with code zero; safe stop was selected, ownership was released, and
-the per-run socket and token were removed.
-
-A desktop-packaging regression was reproduced and closed on 2026-08-13. Moving
-durable run artifacts below `Application Support` made the original per-run
-Unix-domain socket path exceed the macOS limit. The socket and token now use a
-short owner-only temporary directory while manifests and logs keep their
-descriptive durable path. A clean Desktop cold start reached keyboard readiness
-in 34.7 seconds, held VISS `CONNECTED`/`LIVE` and 30.0 Hz simulation cadence,
-then exited with all component codes zero and no remaining control directory or
-process.

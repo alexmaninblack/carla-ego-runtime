@@ -2,9 +2,10 @@
 
 ## Goal
 
-Run one ego vehicle in a CARLA city, collect a deliberately small initial set
-of vehicle-state and GNSS signals, and expose them to network clients through a
-stable COVESA VISS interface.
+Run one ego vehicle in CARLA, project frame-aligned vehicle/GNSS/wheel data
+through VISS and expose a narrowly typed QM advisory return channel without
+granting services vehicle-motion authority. Native Driving Control owns the
+separate motion-control channel.
 
 ## System boundary
 
@@ -22,7 +23,9 @@ flowchart LR
     XCTL -->|"Registers the same actor"| TM["CARLA Traffic Manager"]
     TM -->|"Automatic mode commands"| C
     XCTL -->|"Vehicle control and simulation ticks"| C
-    S -->|"JSON over WSS: Read and Subscribe"| E["VISS clients"]
+    S -->|"Telemetry and advisory status"| E["Authorized VISS clients"]
+    P["Selected platform peer"] -->|"Typed Brake/Tire advisory only"| S
+    S --> Q["QM advisory validation and display"]
     ROS -.-> X["Autoware, RViz, rosbag, ROS nodes"]
 ```
 
@@ -30,7 +33,7 @@ The CARLA/Unreal server remains responsible for the world, physics, vehicle,
 and GNSS actor. This repository owns the ego-vehicle lifecycle, collection,
 normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
 
-## Initial components
+## Runtime components
 
 1. **Runtime** — connects to a running CARLA server and selects or spawns the
    configured ego vehicle.
@@ -46,7 +49,9 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
    tree, performs unit conversions, and adds the documented CARLA simulation
    overlay.
 7. **VISS server** — exposes the signal tree using the project VISS 3.1
-   compatibility profile.
+   compatibility profile and strict selected-peer roles. The advisory gateway
+   validates only the accepted Brake/Tire requests and produces correlated
+   status; it does not apply vehicle controls.
 8. **Control source** — either the BehaviorAgent route process or the M6
    external-control process owns the synchronous clock and ego vehicle; the C++
    telemetry runtime observes its ticks and does not own its actor. In M6.2 the
@@ -58,25 +63,26 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
 ## VISS boundary
 
 VISS is the external service contract, not merely a serialization wrapper. The
-initial profile fixes the following choices:
+current profile fixes the following choices:
 
 - COVESA VISS 3.1 semantics;
 - a VSS 6.0 signal tree plus the documented simulation overlay;
 - JSON primary payload encoding;
 - Secure WebSocket (`wss`) transport;
 - `get`, `subscribe`, and `unsubscribe` for consumers;
-- protocol-valid `set` handling, but no writable signal nodes in the initial
-  tree.
+- general telemetry writes rejected, with only the contract-owned typed Brake
+  and Tire advisory requests writable by the selected strict platform peer.
 
-The specification requires Read and Update support at the transport level.
-Therefore the server must parse Update requests and return a standard VISS
-error for read-only nodes; it must not silently invent actuator semantics. The
-implemented profile and its network test suite are an M4 deliverable; broader
-VISS features remain outside that documented conformance claim.
+The server parses Set requests, rejects read-only/unknown targets and enforces
+the exact advisory schemas, authority, freshness, sequence, lease and replay
+bounds. Its correlated status reports the advisory outcome, not successful
+braking, steering or other actuation. Read-only observers cannot submit it.
+The [VISS profile](viss-profile.md) and [telemetry contract](telemetry-contract.md)
+own the precise interface and conformance scope.
 
-M6 does not turn VISS into an actuator interface. Vehicle commands use the
+The advisory return does not turn VISS into a motion-control interface. Vehicle commands use the
 separate authenticated local contract described in
-[External control contract v2](external-control-contract.md), so telemetry
+[external control contract](external-control-contract.md), so telemetry
 consumers cannot accidentally acquire actuator ownership.
 
 The endpoint is embedded with Boost.Beast/Asio and OpenSSL. The decision and

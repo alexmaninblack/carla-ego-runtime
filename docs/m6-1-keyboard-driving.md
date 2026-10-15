@@ -1,4 +1,11 @@
-# M6.1 keyboard driving and observable startup
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
+<!-- SPDX-License-Identifier: MIT -->
+
+# Standalone manual-only keyboard fixture (M6.1)
+
+Use this optional component fixture only outside a Demo Control-owned lab.
+The installed Driving Control uses the accepted live handover and advisory
+integration, not this historical manual-only configuration.
 
 ## Control model
 
@@ -72,8 +79,3 @@ away to verify safe stop, resume with Enter, then close the keyboard window.
 The resulting manifest must show clean runtime/controller exits, no control
 owner, and removed socket/token; CARLA world settings and owned actors must also
 be restored.
-
-This acceptance completed on the pinned Apple Silicon baseline on 2026-08-12.
-The operator confirmed the cold start, manual drive, live dashboard, safe-stop
-behaviour, and clean exit. The resulting private artifacts report a completed
-run, a stopped controller with no owner, and removed control credentials.

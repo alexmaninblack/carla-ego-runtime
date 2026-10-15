@@ -1,4 +1,10 @@
-# M6 external-control operations and acceptance
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
+<!-- SPDX-License-Identifier: MIT -->
+
+# Standalone external-control acceptance (M6)
+
+This optional bounded component scenario is separate from the installed lab.
+Use Demo Control for the integrated runtime, not this standalone launcher.
 
 ## What M6 runs
 
@@ -17,7 +23,7 @@ server:
 The command channel is newline-delimited JSON over a local Unix-domain socket.
 A fresh per-run token protects acquisition, and both files use owner-only
 permissions. They are removed at shutdown. The public protocol is specified in
-[External control contract v1](external-control-contract.md).
+[External control contract](external-control-contract.md).
 
 ## Run the bounded acceptance
 
@@ -39,7 +45,7 @@ python3 tools/run_m6.py \
 
 Use `--headless --dashboard-quiet` for non-visual restart checks and
 `--repeat 2` to require two complete sequential sessions. `--headless` hides
-only the terminal dashboard; the CARLA editor continues to render normally.
+only the terminal dashboard; the simulator continues to render normally.
 
 ## Acceptance sequence
 
@@ -58,29 +64,10 @@ at least 5 m travelled, at least 5 km/h reached, and no more than 0.5 km/h at
 the end. Release, disconnect, command timeout, and shutdown all select zero
 throttle, full brake, and centred steering.
 
-## Local acceptance record
-
-M6 was accepted on 2026-08-12 on the pinned Apple Silicon baseline. The final
-motion-qualified session produced:
-
-- 8.88 m measured travel, 8.61 km/h maximum speed, and 0.00 km/h final speed;
-- 180 accepted commands across two authenticated acquisitions;
-- one command timeout, one explicit release, and one intentional disconnect;
-- zero rejected messages and no surviving control owner;
-- a continuous measured 30.0 Hz simulation cadence and 4.0 dashboard events/s;
-- 0.61 ms average and 0.8 ms maximum local VISS event latency;
-- successful independent VISS probes before and after driving;
-- clean removal of the vehicle, Unix socket, token, and prior synchronous world
-  settings.
-
-A visual run and two additional sequential restart runs completed before the
-motion-qualified session. The Python protocol/tool suite and the complete CTest
-suite are required to pass before tagging the release.
-
 ## Safety boundary
 
 This is an authenticated local development channel, not a remotely exposed
 drive-by-wire service. Do not replace the Unix socket with a network listener
 without a separate threat model, mutual authentication, authorization policy,
-rate limits, audit requirements, and network-loss safety analysis. VISS remains
-read-only and must not be used as an implicit shortcut around that review.
+rate limits, audit requirements, and network-loss safety analysis. This fixture uses a read-only VISS observer. The integrated strict profile's
+typed QM advisory targets are not motion controls and cannot bypass that review.

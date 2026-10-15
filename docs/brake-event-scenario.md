@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 maninblack -->
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
 <!-- SPDX-License-Identifier: MIT -->
 
 # Deterministic CARLA brake-event scenario
@@ -19,7 +19,7 @@ demonstration while changing only the simulated vehicle side:
 
 The workflow does **not** install or modify AosVM, KUKSA, the Vehicle Data
 Provider, the Brake Health service, authorization, or AosCloud state. It
-therefore remains usable while those layers are still being designed.
+therefore remains independently testable without changing those layers.
 
 ## Scenario state machine
 

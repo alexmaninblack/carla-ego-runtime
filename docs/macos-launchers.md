@@ -1,9 +1,12 @@
+<!-- SPDX-FileCopyrightText: 2026 maninblack -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # macOS desktop launchers
 
 Scope: standalone developer M5/M6 launchers, not the installed SDV Lab entry
-point. Kit028 uses signed Setup → Open demo → Demo Control-owned prebuilt
+point. The installed lab uses signed Setup → Open SDV Lab → Demo Control-owned prebuilt
 standalone CARLA. Do not run these legacy Editor-oriented launchers over that
-instance. See the [operator guide](../../aosedge-sdv-demo/docs/getting-started/installed-preview-cloud-first-use.md).
+instance. See the [operator guide](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/getting-started/installed-preview-cloud-first-use.md).
 The instructions below preserve the component-level workflow.
 
 `tools/install_macos_launchers.py` creates three signed application bundles:
