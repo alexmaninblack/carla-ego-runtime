@@ -123,7 +123,7 @@ ARM64 controller. The installed lab uses standalone CARLA, not Unreal Editor.
 - [Telemetry contract](docs/telemetry-contract.md)
 - [Driving maneuvers and brake-event scenario](docs/brake-event-scenario.md)
 - [Replaceable control source](docs/external-control-contract.md)
-- [Standalone development launchers](docs/macos-launchers.md)
+- [Standalone component fixtures and wrappers](docs/standalone-fixtures.md)
 - [Architecture decisions](docs/decisions/)
 - [Third-party dependencies](THIRD_PARTY.md)
 

@@ -2,7 +2,7 @@
 
 ## Stable native UI identities
 
-The review-branch pilot adds virtual Accessibility button elements to the
+The native control view exposes semantic Accessibility button elements on the
 existing custom-drawn `ControlView`. Their identifiers are
 `driving.safe-stop`, `driving.autopilot`, `driving.brake-maneuver`,
 `driving.tire-maneuver` and `driving.return-to-road`. Visible captions and window
@@ -16,16 +16,14 @@ configured and disabled while busy. The remaining controls and their hit-tests
 are unchanged. These elements add no control socket, command, credential or
 vehicle authority.
 
-The integration repository's native UI runner pilot compiles this exact
-production view into a separate signed fixture on M1. Its callbacks confirm
-mouse delivery without connecting a vehicle. This mechanical gate is not live
-motion, Safe Stop physics, product delivery or installed-package acceptance.
-The installed immutable payload is never replaced in place.
+The integration native UI runner targets these semantic identities rather than
+fixed coordinates. Its isolated fixture gate is distinct from installed live
+motion, Safe Stop physics and product-delivery acceptance. The
+[current baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md)
+owns those exact results; automation never patches immutable installed bytes.
 
-## Native telemetry development slice — 2026-09-07
+## Native telemetry
 
-The operator authorized combining Driving Control and telemetry, followed by
-an immediate live democtl trial; broad qualification and publication are deferred.
 `carla-viss-client --monitor-json` emits one schemaVersion=1 UTF-8 JSON line
 every 500 ms, at most 64 KiB, with source=gateway-viss, connection/state,
 existing vehicle/exercise/physical-stop projections, metric text, advisory
@@ -36,7 +34,8 @@ The native display additionally expires its input after five seconds and
 marks child exit disconnected. Neither condition changes vehicle commands.
 Control ownership/focus/Safe Stop semantics remain on the existing bridge.
 The runner no longer needs a Terminal or a second dashboard process. CARLA,
-VM and Cloud interfaces are unchanged. This is not complete advisory support.
+VM and Cloud interfaces are unchanged. Advisory readiness and Gateway status
+remain distinct from this telemetry transport.
 
 The in-car native dashboard presents vehicle telemetry only. Its drive mode is
 the observed ActiveMode, while MOVING / STOPPING / STOPPED describes physical
@@ -47,7 +46,7 @@ native display does not consume the engineering `stop` projection or show
 platform terminology, installation state or update permission. AosCore's
 authorization gate and the separate Cloud-only Platform Team view are unchanged.
 
-### Fixed telemetry pages — accepted 2026-09-07
+### Fixed telemetry pages
 
 The native telemetry area uses Dashboard / Vehicle / Data pages, replacing the
 expanding Engineering details section. Changing pages never resizes the window
@@ -64,7 +63,7 @@ choices to accessibility and return driving keyboard focus after selection.
 The Control side, source transport, data freshness rules and Safe Stop behavior
 are unchanged. Only the native UI target needs recompilation for this change.
 
-## Selected-vehicle external connectivity — 2026-09-07
+## Selected-vehicle external connectivity
 
 Driving Control has one disconnect/reconnect button outside the telemetry
 area. The interactive runner accepts an optional trusted
@@ -82,7 +81,7 @@ Closing waits for the in-flight operation but does not reconnect the VM.
 The explicit CLI restore works even after simulation stop. No network state
 is added to the in-car telemetry or its VISS contract.
 
-## Interactive session lifetime — 2026-09-07
+## Interactive session lifetime
 
 The interactive runner used by `democtl simulation start` passes
 `--until-stopped` to its existing Controller. This disables only the total
@@ -93,7 +92,7 @@ Explicit stop, signal handling, command/ownership expiry, disconnect Safe Stop
 and startup/shutdown timeouts retain their existing behavior. No VM image or
 Cloud configuration change is required.
 
-## Engineering display additions — 2026-09-07
+## Engineering display
 
 The VISS monitor renders read-only drive/reset context, a shortened exercise
 fingerprint and the physical Safe Stop observation alongside existing vehicle,
@@ -107,14 +106,15 @@ five seconds without a received/advancing frame labels all values stale and
 the physical stop state unknown. Disconnect is displayed explicitly. These
 display semantics do not change source timestamps or the runtime freshness
 policy. Driver Advisory has separate Brake and Tire rows, both explicitly
-UNAVAILABLE until the actual Gateway advisory implementation is connected.
-No request or applied advisory status is synthesized from telemetry.
+UNAVAILABLE until the actual Gateway supplies their accepted readiness/status.
+The integrated implementation supplies that channel; ordinary telemetry alone
+never synthesizes a request, warning or applied status.
 
 ## Demo Orchestrator Safe Stop and Reset
 
-### Test scene recovery and maneuvers — accepted 18 September 2026
+### Test scene recovery and maneuvers
 
-P5 adds a separate trusted `--scene-command` argv prefix to the existing native
+A separate trusted `--scene-command` argv prefix is supplied to the existing native
 runner. Driving Control invokes only Demo Control's Test `simulation
 return-to-road` or `simulation exercise brake|tire` action without a shell.
 No new controller/tick owner, guest command, model Reset or advisory Reset is
@@ -140,7 +140,7 @@ placement requires advancing stationary road-confirmed frames for at least
 half a second before stationary Manual. It never resumes Autopilot. Live
 discontinuity/product and native UI qualification remain separate from tests.
 
-### Initial stationary Manual readiness — authorized 2026-09-06
+### Initial stationary Manual readiness
 
 The operator explicitly authorized a narrowly scoped command-timeout exception
 for initial demo readiness. `manual_ready` requires this operation's confirmed
@@ -157,7 +157,7 @@ command expiry. Ownership timeout, disconnect, release, explicit Safe Stop and
 controller failure still stop the car. No requested mode is reported as applied
 before CARLA completes the frame, and no AosCore gate or VDP evidence is bypassed.
 
-The operator authorized this host-side extension on 2026-09-05. Protocol v3
+Protocol v3
 adds `action: "orchestrate"` on the existing private socket. Exact fields are
 `version`, `action`, `requestId`, `token`, `operation` and canonical UUID
 `operationId`. The protected per-run token is not a Cloud or VISS identity.
@@ -296,8 +296,9 @@ CARLA.
 The external-control process owns its spawned ego vehicle and CARLA's
 synchronous tick for the complete session. Manual, automatic, and stopped modes
 therefore do not replace the actor, reset the scene, or interrupt VISS. The C++
-runtime remains a non-owning telemetry observer, and VISS remains a read-only
-interface. Socket paths, token files, and token values never enter the public
+runtime remains a non-owning telemetry observer. General VISS telemetry is
+read-only and motion writes remain forbidden; the separately scoped typed QM advisory return
+is not this actuator-control interface. Socket paths, token files, and token values never enter the public
 VSS tree.
 
 ## Controller-to-Gateway frame facts

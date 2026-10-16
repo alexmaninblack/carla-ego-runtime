@@ -22,7 +22,7 @@ and [external-control contract](external-control-contract.md).
 
 These are source capabilities, not a claim that every environment or failure
 matrix has been qualified. The integration release's
-[current baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/5ea40f03b714fea924f6af88027abbbd1e018127/docs/qualification/current-baseline.md)
+[current baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md)
 identifies the actual package, target and scoped API/UI evidence.
 
 ## Installed lab versus standalone development
@@ -32,7 +32,7 @@ without Unreal Editor. Packaging and operator startup belong to SDV Lab Setup
 and Demo Control, not another standalone launcher in this repository.
 
 The [native development setup](carla-setup-macos.md) and
-[standalone launchers](macos-launchers.md) are specialist component tools.
+[standalone fixtures and wrappers](standalone-fixtures.md) are specialist component tools.
 Some retained standalone workflows use an Editor-based development environment;
 they are not the installed lab's default path. Do not start them over an
 installed simulator/controller session.

@@ -133,9 +133,10 @@ generation facts, and the three Reset generation/in-progress/discontinuity
 facts. The selected VDP transport, Engineering Dashboard, and qualification
 clients have separate compiled read-only policies. Assignment generation and
 the post-selection exclusive frame floor prevent a newly selected Unit from
-receiving the previously retained snapshot. This is an offline-validated
-Gateway boundary only; onboarding delivery of per-Unit credentials and live
-VM/Unit qualification remain separate work.
+receiving the previously retained snapshot. The Gateway boundary and onboarding delivery are distinct proofs; the
+[integration baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md)
+records current selected-Unit onboarding and live results without closing every
+negative or dual-role case.
 
 ## Time and synchronization
 
@@ -193,7 +194,7 @@ state frame IDs and replaces its single retained snapshot atomically;
 duplicates and out-of-order state frames are rejected. It never queues
 historical snapshots.
 
-## Not included in v0.1
+## Outside the current telemetry scope
 
 Images, point clouds, radar detections, ultrasonic ranges, lane/collision
 events, writable vehicle-control signals, a ROS 2 schema, and a non-VISS custom

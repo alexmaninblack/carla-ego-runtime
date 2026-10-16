@@ -53,14 +53,11 @@ Version/help output exits normally; it does not start a simulator.
 Use Demo Control for the integrated lab. It owns CARLA, Driving Control,
 source attachment, selected-Unit mTLS, startup ordering and final shutdown.
 
-Independent standalone fixtures remain available for their explicit purposes:
-
-- [Routed drive](m5-operations.md): BehaviorAgent owns the actor and clock.
-- [External-control acceptance](m6-operations.md): bounded private control-channel checks.
-- [Manual-only panel](m6-1-keyboard-driving.md): focused standalone manual fixture.
-- [Manual/autopilot handover](m6-2-live-handover.md): one actor, one tick owner.
-- [Brake-event exercise](brake-event-scenario.md): deterministic physical maneuver.
-- [Standalone desktop wrappers](macos-launchers.md): optional source-development launchers.
+[Standalone fixtures and wrappers](standalone-fixtures.md) describes routed
+BehaviorAgent driving, bounded control acceptance, manual-only compatibility,
+live handover and optional desktop wrappers. The
+[brake-event exercise](brake-event-scenario.md) owns its physical maneuver.
+Choose by purpose; old tool identifiers are not sequential setup stages.
 
 Supply matching local runtime/Python/configuration and protected TLS material.
 Standalone profiles use their declared identity and trust configuration; a

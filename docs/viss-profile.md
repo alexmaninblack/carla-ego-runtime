@@ -26,7 +26,7 @@ change and compatibility notes.
 | Strict client identity | CA-verified X.509 leaf with one role URI SAN |
 | Primary payload | VISS JSON |
 | Client operations | `get`, `subscribe`, `unsubscribe` |
-| Update operation | Sensors remain read-only; only the two D4-008 typed QM advisory targets accept authenticated selected-VDP Set |
+| Update operation | Sensors remain read-only; only the fixed Brake/Tire advisory Request and Availability targets accept authenticated selected-VDP Set |
 | Signal model | VSS 6.0 plus `Vehicle.CarlaSimulation.*` overlay |
 | Nominal state cadence | 30 Hz for M5; 20 Hz standalone default |
 | Nominal GNSS cadence | 10 Hz |
@@ -47,7 +47,8 @@ assignment-control socket described below is a separate local control plane.
   identifier that created the subscription.
 - **Set** rejects sensors, arbitrary paths and all motion/control writes.
   The selected platform role may write only the two D4-008 typed QM Request
-  leaves described below; independent/dashboard and update-runtime roles
+  leaves and the two corresponding Availability inputs described below;
+  independent/dashboard and update-runtime roles
   cannot write them. No request body can choose an identity or authority.
 
 ## Typed QM advisory boundary (D4-008)
@@ -66,12 +67,20 @@ sequence identity, UTC dates, at-most-two-second past acceptance age, at-most
 100 ms future-clock skew and a 30-second declared lease. Effective activation
 expires at the earlier of original expiry and acceptance plus 30 seconds;
 `activeUntil` and the monotonic deadline use that same bounded expiry without
-rewriting the original request. Refresh is bounded to 10 seconds; changes to one second. A bounded
+rewriting the original request. Repeated operation/recommendation refreshes are rate-limited to one per ten
+seconds; changed operation/recommendation requests to one per second. A bounded
 512-entry replay cache per endpoint retains accepted identities for five
 minutes and is shared across WebSocket reconnects. Different content for the
 same identity and sequence rollback fail closed. Identical repeats do not
 renew leases or replace newer state. Neither Set success nor service intent
 is presented as application evidence: GatewayStatus is the authority.
+
+The separate [readiness contract](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/contracts/qm-advisory-profile/readiness-and-reset.md)
+adds exactly `Vehicle.OEM.BrakeHealth.Advisory.Availability` and
+`Vehicle.OEM.TireHealth.Advisory.Availability` as selected-platform inputs.
+Their bounded heartbeat reports advisory support/readiness; Gateway publishes
+the corresponding read-only status with its own expiry. These inputs do not
+apply, clear or renew a warning and cannot authorize motion or Platform FOTA.
 
 Request/status leaves exist as empty unavailable values before the first
 accepted request. They may be included in the existing telemetry subscription
@@ -86,8 +95,9 @@ store has been introduced. Envelopes issued before the Gateway process
 started are rejected and cannot reapply a retained target. Accepted valid
 duplicate reconciliation across a whole Gateway process restart still needs
 an approved persistence/reconstruction decision. Reconnect within the same
-Gateway process is implemented and tested. This host-tested source change is
-not evidence of deployed or live end-to-end advisory operation.
+Gateway process is implemented and tested. Focused host tests are not live acceptance. Current installed advisory proof
+and remaining restart cases are mapped by the
+[integration baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md).
 
 The implemented filter subset is a `paths` filter for Read and a required
 `timebased` filter plus optional `paths` filter for Subscribe. Time-based
@@ -155,7 +165,8 @@ Strict mode admits at most one live session for each of four roles and at most
 four sessions globally. The selected Platform Unit follows the compiled
 D4-006 selected-transport read policy. Platform Update Runtime can read only
 the ten frozen Safe Stop paths. Dashboard and qualification clients use the
-independent read-only policy. Every Set is denied, and an unauthorized read or
+independent read-only policy. Set is denied except for the selected Platform
+Unit's exact typed advisory/readiness targets; an unauthorized read or
 subscription returns ordinary unavailable data without disclosing another
 role's path set.
 
