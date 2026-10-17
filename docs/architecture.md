@@ -18,8 +18,8 @@ flowchart LR
         N -. "Optional future adapter" .-> ROS["ROS 2"]
     end
     C["CARLA Unreal server on macOS"] -->|"RPC and native sensor stream"| K
-    B["BehaviorAgent route<br/>M5/M5.1"] -->|"Selectable tick owner"| C
-    ECTL["M6.2 keyboard panel"] -->|"Authenticated local socket"| XCTL["Hybrid external-control tick owner"]
+    B["Standalone BehaviorAgent route"] -->|"Selectable tick owner"| C
+    ECTL["Driving Control client"] -->|"Authenticated local socket"| XCTL["Hybrid external-control tick owner"]
     XCTL -->|"Registers the same actor"| TM["CARLA Traffic Manager"]
     TM -->|"Automatic mode commands"| C
     XCTL -->|"Vehicle control and simulation ticks"| C
@@ -52,9 +52,9 @@ normalization, VSS mapping, simulation metadata extension, and VISS endpoint.
    compatibility profile and strict selected-peer roles. The advisory gateway
    validates only the accepted Brake/Tire requests and produces correlated
    status; it does not apply vehicle controls.
-8. **Control source** — either the BehaviorAgent route process or the M6
+8. **Control source** — either the standalone BehaviorAgent route process or the
    external-control process owns the synchronous clock and ego vehicle; the C++
-   telemetry runtime observes its ticks and does not own its actor. In M6.2 the
+   telemetry runtime observes its ticks and does not own its actor. The hybrid
    external-control owner switches its one actor among manual, Traffic Manager,
    and safe-stop commands without starting another tick owner. See
    [ADR 0008](decisions/0008-replaceable-external-control-source.md) and
@@ -96,8 +96,8 @@ public interface.
   the target Apple Silicon machine.
 - The standalone runtime is the designated synchronous tick owner by default
   and uses a 0.05 second fixed delta (20 simulation frames per second). Observer
-  mode is explicit; the routed M5/M5.1 and external-control M6 processes instead
-  own the clock at their configured 30 Hz cadence.
+  mode is explicit; routed BehaviorAgent and hybrid external-control processes
+  instead own the clock at their configured 30 Hz cadence.
 - Vehicle state is sampled every simulation frame; GNSS initially runs at
   10 Hz.
 - CARLA's internal RPC and streaming protocol is not the public contract.

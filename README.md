@@ -8,8 +8,8 @@ Vehicle Gateway and native driving/control tooling. It translates simulator data
 <a id="sdv-lab-entry"></a>
 
 For the **whole demo**, start at the [SDV Lab README](https://github.com/alexmaninblack/aosedge-sdv-demo).
-Only the product repository is manually cloned for its pinned multi-component
-build. The instructions below are for working on **this component alone**;
+The product launcher prepares its pinned multi-component checkouts automatically.
+The instructions below are for working on **this component alone**;
 a host check does not publish, install or qualify a vehicle package.
 
 ## 1 Prepare a macOS component workspace

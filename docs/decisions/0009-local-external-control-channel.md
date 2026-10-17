@@ -1,19 +1,18 @@
 # ADR 0009 — Authenticated local external-control channel
 
-Status: accepted for M6 implementation
+Status: accepted
 
 ## Context
 
-M6 needs an independent client to control throttle, brake, and steering without
-coupling actuator safety to the telemetry runtime. The M5 architecture already
-assigns synchronous ticks and vehicle ownership to a replaceable control-source
-process, while the C++ runtime observes ticks and serves read-only VISS
-telemetry.
+An independent client must control throttle, brake and steering without
+coupling actuator safety to the telemetry runtime. A replaceable control-source
+process owns synchronous ticks and the vehicle, while the C++ runtime observes
+ticks and serves VISS telemetry.
 
-VISS `set` is not used for M6 control. The current VISS profile deliberately
-has no client authentication and exposes only sensor and attribute nodes.
-Making its network endpoint writable would combine authentication, actuator
-authorization, clock ownership, and telemetry compatibility in one change.
+VISS `set` is not a motion-control interface. Its current strict mTLS profile
+permits only the accepted typed Brake/Tire QM advisory writes, not throttle,
+brake or steering. Motion commands use a separate authenticated local channel,
+keeping control ownership and timing independent of telemetry consumers.
 
 ## Decision
 
@@ -25,7 +24,11 @@ An independent local client connects through a Unix-domain stream socket. The
 socket and token file are created in a short per-run temporary directory with
 owner-only permissions and are removed during cleanup. This avoids the small
 Unix-domain path limit when durable run artifacts use a descriptive path.
-Each JSON-lines message uses control contract version 1.
+The base JSON-lines protocol is version 1. Negotiated mode handover and
+scenario extensions retain its safety/ownership rules; the
+[current external-control contract](../external-control-contract.md) owns
+supported versions and the [handover decision](0010-live-handover-with-traffic-manager.md)
+owns mode transitions.
 
 The protocol has four actions:
 
@@ -47,11 +50,11 @@ selected before acquisition, after release, immediately after disconnect, when
 the command freshness deadline expires, or when the ownership heartbeat lease
 expires. Heartbeat and command deadlines use monotonic time.
 
-BehaviorAgent remains an independently selectable control source. M6 does not
-silently transfer a live external-control session to BehaviorAgent; fallback
-within the external-control source means a deterministic safe stop. A later
-automatic-driving handover requires its own state-transition and route-rejoin
-acceptance work.
+BehaviorAgent remains an independently selectable control source. This base
+protocol does not silently transfer a live external-control session to BehaviorAgent; fallback
+within the external-control source means a deterministic safe stop. Automatic
+handover uses the separately accepted mode-transition contract; support for
+that extension does not change version-1 fail-safe semantics.
 
 ## Consequences
 
@@ -60,7 +63,7 @@ acceptance work.
   no reusable credential is committed or logged.
 - Only one client can own control, and stale messages cannot replay an older
   command.
-- VISS remains compatible, read-only, and continuously available during
-  control acquisition and release.
-- Remote control is outside M6. It requires a separately authenticated and
-  encrypted transport plus a deployment threat review.
+- VISS telemetry and its narrow QM advisory channel remain independent of
+  control acquisition and release; neither grants motion-control ownership.
+- Remote motion control is outside this local-channel contract. It requires
+  a separately authenticated and encrypted transport plus a deployment threat review.

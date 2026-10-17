@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-M4 needs a VISS 3.1 service on the Apple Silicon runtime. The two candidate
+The Apple Silicon runtime needs a VISS 3.1 service. The two candidate
 architectures were an endpoint embedded in this C++ process and a feed from the
 runtime into COVESA VISSR. The comparison was made against COVESA VISS 3.1 at
 commit
@@ -27,7 +27,7 @@ vehicle, latest-value-only profile.
 
 ## Decision
 
-Implement the initial endpoint in this process with Boost.Beast/Asio and
+Implement the endpoint in this process with Boost.Beast/Asio and
 OpenSSL. It is a clean implementation from the public VISS 3.1 specification;
 no VISSR or VISS specification source, schema, or generated artifact is copied
 into the repository.
@@ -39,7 +39,7 @@ store keeps one frame, every client queue and subscription set has a configured
 bound, and slow-consumer event drops and elapsed subscription intervals are
 observable in shutdown metrics.
 
-The implemented M4 filter subset is:
+The implemented filter subset is:
 
 - Read with an optional `paths` filter;
 - Subscribe with one required `timebased` filter and an optional `paths`
@@ -48,17 +48,22 @@ The implemented M4 filter subset is:
 - `*` wildcard matching inside relative path selections.
 
 Unsupported VISS features receive a protocol error rather than being ignored.
-All exposed nodes are sensors or attributes, so Update requests are validated
-and then rejected with VISS `400 invalid_data`.
+Telemetry sensors and attributes remain read-only. General Update requests
+are validated and rejected with VISS `400 invalid_data`; only the accepted
+typed Brake/Tire advisory Request and Availability leaves permit Set by the
+authenticated selected platform peer. Strict mTLS roles and exact allowlists
+are defined by the [current VISS profile](../viss-profile.md). This narrow
+advisory channel grants no vehicle-motion authority.
 
 ## Consequences
 
 The runtime has no Go, VISSR, feeder, or external database dependency. The
 small service profile is independently testable and preserves the exact CARLA
-data-point timestamps. The project now owns the maintenance and conformance
-burden for this profile; adding authorization, metadata search, curve/logical
-filters, compression, or writable actuators requires a separate contract and
-security review.
+data-point timestamps. The project owns the maintenance and conformance
+burden for this profile. Broader authorization, metadata search, curve/logical
+filters, compression or additional writable targets require a separate contract
+and security review; the accepted strict-role/QM boundary is not a general
+actuator interface.
 
 The MPL-2.0 obligations discussed above do not apply to the project code
 because COVESA implementation artifacts are not redistributed. If VISSR code

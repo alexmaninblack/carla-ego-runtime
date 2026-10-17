@@ -1,11 +1,11 @@
 # ADR 0006 — Frame-aligned latest-value store
 
-Status: accepted; UTC semantics amended with operator approval, 2026-09-06
+Status: accepted
 
 ## Context
 
 Vehicle state must remain attributable to one CARLA simulation frame. A queue
-between the collector and the future VISS server could grow without bound when
+between the collector and the VISS server could grow without bound when
 a consumer is slower than the simulator, and independent RPC reads without a
 tick boundary could mix adjacent frames.
 
@@ -33,7 +33,7 @@ mode is explicit and never applies settings or advances the world.
 
 ## Consequences
 
-Memory use is bounded independently of runtime duration and a future VISS
+Memory use is bounded independently of runtime duration and a VISS
 consumer cannot create collector backpressure by leaving historical snapshots
 unread. Consumers that require history must persist it outside this store. Only
 one process may be the tick owner; multi-client deployments must designate it

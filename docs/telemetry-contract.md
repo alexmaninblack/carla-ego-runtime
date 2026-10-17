@@ -125,7 +125,7 @@ physical and four unmatched controller records for at most 250 ms and keeps
 saturating diagnostic counters only. It does not use
 `controller-status.json`, reuse last-known data, retain history or implement
 reconnect.
-The Gateway now implements the purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS
+The Gateway implements the purpose-bound `PLATFORM_UPDATE_RUNTIME` mTLS
 role and its exact ten-path read allowlist:
 `Vehicle.Speed`, accelerator and brake pedal position,
 `Vehicle.CarlaSimulation.FrameId`, the three Control active/transition/
@@ -151,9 +151,9 @@ snapshots never refresh timestamps. Duplicate/out-of-order frame rejection is
 unchanged. A slow collector or stopped stream therefore becomes stale rather
 than being made fresh by a later VISS request.
 
-This operator-approved amendment (2026-09-06) supersedes the original
-simulation-time-to-UTC anchor. Pauses, reset work and faster/slower simulation
-must not accumulate an offset against the VM's real-time freshness check.
+UTC must not be extrapolated from a simulation-time anchor. Pauses, reset work
+and faster/slower simulation must not accumulate an offset against the VM's
+real-time freshness check.
 Simulation time remains separate and deterministic; UTC need not advance at
 simulation speed or be monotonic across a host clock correction. Downstream
 freshness/future-time checks remain unchanged. This timestamp describes
